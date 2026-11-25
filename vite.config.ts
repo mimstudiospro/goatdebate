@@ -4,6 +4,9 @@ import { defineConfig } from 'vitest/config'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Relative base: the same build serves at /goatdebate/ on github.io
+  // and at the root once the custom domain (goatdebate.mimstudiospro.com) is live.
+  base: './',
   plugins: [react(), tailwindcss()],
   test: {
     environment: 'node',
