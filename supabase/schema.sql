@@ -1,6 +1,6 @@
 -- ============================ GOAT Debate — schema (v1) ============================
 --
--- Run ONCE in the Lovable Cloud SQL editor (or ask Lovable to apply it).
+-- Run ONCE in the Supabase SQL editor.
 -- Idempotent: safe to run again (CREATE IF NOT EXISTS, ON CONFLICT DO NOTHING).
 --
 -- Tables:
@@ -67,6 +67,16 @@ create policy "votes_public_read" on public.votes
 drop policy if exists "votes_anon_insert" on public.votes;
 create policy "votes_anon_insert" on public.votes
   for insert to anon with check (true);
+
+-- 2b. Table privileges -----------------------------------------------------
+-- RLS policies alone are NOT enough: the anon/authenticated roles also
+-- need table-level privileges, or every app query fails with
+-- "permission denied for table debates" (42501). The SQL editor runs
+-- as postgres, so verification queries there pass even without these —
+-- that is how this was missed the first time.
+grant select on public.debates to anon, authenticated;
+grant select on public.contenders to anon, authenticated;
+grant select, insert on public.votes to anon, authenticated;
 
 -- 3. cast_vote — the ONLY write path the app uses --------------------------
 -- Upserts by (debate_id, voter_token): first vote inserts, changing a
