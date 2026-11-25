@@ -3,6 +3,7 @@ import { castVote, fetchAllDebates } from "../lib/api";
 import type { DebateWithTally } from "../lib/api";
 import { computePercentages, formatVotes, getVoterToken } from "../lib/votes";
 import { initials } from "../lib/debates";
+import DebateComments from "./DebateComments";
 
 export default function DebatePage({
   slug,
@@ -122,11 +123,11 @@ export default function DebatePage({
               : "bg-gold text-black hover:bg-gold-deep"
           } disabled:cursor-not-allowed disabled:opacity-50`}
         >
-          {isMine ? "Voted — tap to switch" : voting ? "Voting…" : `Vote ${c.name.split(" ").pop()}`}
+          {isMine ? "Locked in — tap to switch sides" : voting ? "Voting…" : `Vote ${c.name.split(" ").pop()}`}
         </button>
         {isMine && (
           <p className="mt-2 text-center text-xs text-zinc-400">
-            Tap {other.name.split(" ").pop()} below to switch your vote.
+            Changed your mind? Tap {other.name.split(" ").pop()} below — no judgment.
           </p>
         )}
 
@@ -161,7 +162,7 @@ export default function DebatePage({
         </h1>
         <p className="mt-3 text-zinc-400">
           {formatVotes(tally.total)} {tally.total === 1 ? "vote" : "votes"} so far
-          {myVote ? " · you have voted" : " · have your say"}
+          {myVote ? " · you've picked your side" : " · your turn to weigh in"}
         </p>
       </div>
 
@@ -190,12 +191,14 @@ export default function DebatePage({
           onClick={() => void share()}
           className="rounded-full border border-line bg-panel px-6 py-3 text-sm font-bold hover:border-gold/60"
         >
-          {copied ? "Link copied ✓" : "Share this debate"}
+          {copied ? "Link copied ✓ — go start an argument" : "Share this debate"}
         </button>
         <a href="#/" className="text-sm font-semibold text-zinc-400 hover:text-gold">
           See all debates →
         </a>
       </div>
+
+      <DebateComments key={debate.id} debateId={debate.id} commentsEnabled={votingEnabled} />
     </div>
   );
 }

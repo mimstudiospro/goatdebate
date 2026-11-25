@@ -3,6 +3,7 @@ import { SEED_DEBATES } from "./debates";
 import type { Debate } from "./debates";
 import { emptyTally, tallyFromVotes } from "./votes";
 import type { Tally } from "./votes";
+import type { Comment } from "./comments";
 
 export interface DebateWithTally {
   debate: Debate;
@@ -93,4 +94,46 @@ export async function castVote(debateId: string, contenderId: string, voterToken
     _voter: voterToken,
   });
   if (error) throw new Error(error.message);
+}
+
+interface CommentRow {
+  id: string;
+  debate_id: string;
+  voter_token: string;
+  author_name: string;
+  body: string;
+  created_at: string;
+}
+
+/** Load a debate's comments, newest first. Empty when unconfigured. */
+export async function fetchComments(debateId: string): Promise<Comment[]> {
+  if (!supabaseConfigured || !supabase) {
+    return [];
+  }
+  const { data, error } = await supabase
+    .from("comments")
+    .select("id, debate_id, voter_token, author_name, body, created_at")
+    .eq("debate_id", debateId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CommentRow[];
+}
+
+/** Post a comment. The caller validates (length, filter) first. */
+export async function postComment(
+  debateId: string,
+  authorName: string,
+  body: string,
+  voterToken: string,
+): Promise<Comment> {
+  if (!supabaseConfigured || !supabase) {
+    throw new Error("Comments are not connected yet");
+  }
+  const { data, error } = await supabase
+    .from("comments")
+    .insert({ debate_id: debateId, voter_token: voterToken, author_name: authorName, body })
+    .select("id, debate_id, voter_token, author_name, body, created_at")
+    .single();
+  if (error) throw new Error(error.message);
+  return data as CommentRow;
 }

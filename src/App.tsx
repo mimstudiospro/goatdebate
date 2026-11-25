@@ -72,7 +72,10 @@ export default function App() {
                 WHO IS THE <span className="text-gold">GOAT?</span>
               </h1>
               <p className="mx-auto mt-4 max-w-md text-lg text-zinc-400">
-                Settle it. Vote for your GOAT.
+                The Greatest GOAT Debate Website of All Time
+              </p>
+              <p className="mx-auto mt-2 max-w-md text-sm text-zinc-500">
+                Ten debates. Zero mercy. One vote per browser — make it count.
               </p>
               {!supabaseConfigured && (
                 <p className="mx-auto mt-5 max-w-md rounded-xl border border-line bg-panel px-4 py-3 text-sm text-zinc-300">
@@ -103,6 +106,7 @@ export default function App() {
           <span>
             <span className="font-black text-zinc-300">GOAT Debate</span> — one vote per
             browser, per debate. Change your mind anytime.
+            <span className="text-zinc-400"> No refunds on bad takes.</span>
           </span>
           <span>© {new Date().getFullYear()} GOAT Debate</span>
         </div>

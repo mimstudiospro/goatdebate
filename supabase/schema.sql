@@ -7,6 +7,7 @@
 --   debates     — one row per GOAT debate (slug, title, sport)
 --   contenders  — exactly two per debate (name, tagline, sort_order)
 --   votes       — one row per browser per debate; unique (debate_id, voter_token)
+--   comments    — one row per comment (no sign-in; voter_token identifies the browser)
 --
 -- Voting goes through ONE SECURITY DEFINER RPC, cast_vote, which upserts
 -- by (debate_id, voter_token) so a browser can change its vote. The RPC
@@ -78,6 +79,38 @@ grant select on public.debates to anon, authenticated;
 grant select on public.contenders to anon, authenticated;
 grant select, insert on public.votes to anon, authenticated;
 
+-- 2c. Comments table -------------------------------------------------------
+-- No sign-in: voter_token identifies the browser (same token as votes),
+-- so a browser's own comments can be recognised. No comments are seeded.
+-- Moderation is client-side only in v1 (profanity/abuse filter in
+-- src/lib/comments.ts); the DB enforces the shape: non-empty body,
+-- max 500 chars, author name max 40 chars.
+create table if not exists public.comments (
+  id uuid primary key default gen_random_uuid(),
+  debate_id uuid not null references public.debates (id) on delete cascade,
+  voter_token text not null,
+  author_name text not null,
+  body text not null,
+  created_at timestamptz not null default now(),
+  constraint comments_body_nonempty check (char_length(trim(body)) > 0),
+  constraint comments_body_max_length check (char_length(body) <= 500),
+  constraint comments_author_max_length check (char_length(author_name) <= 40)
+);
+
+create index if not exists comments_debate_id_idx on public.comments (debate_id);
+
+alter table public.comments enable row level security;
+
+drop policy if exists "comments_public_read" on public.comments;
+create policy "comments_public_read" on public.comments
+  for select to anon, authenticated using (true);
+
+drop policy if exists "comments_anon_insert" on public.comments;
+create policy "comments_anon_insert" on public.comments
+  for insert to anon with check (true);
+
+grant select, insert on public.comments to anon, authenticated;
+
 -- 3. cast_vote — the ONLY write path the app uses --------------------------
 -- Upserts by (debate_id, voter_token): first vote inserts, changing a
 -- vote updates the contender. Validates that the contender belongs to
@@ -122,7 +155,8 @@ insert into public.debates (id, slug, title, sport) values
   ('66666666-6666-4666-8666-666666666666', 'serena-vs-graf', 'Serena Williams vs Steffi Graf', 'Women''s Tennis'),
   ('77777777-7777-4777-8777-777777777777', 'hamilton-vs-schumacher', 'Hamilton vs Schumacher', 'Formula 1'),
   ('88888888-8888-4888-8888-888888888888', 'woods-vs-nicklaus', 'Woods vs Nicklaus', 'Golf'),
-  ('99999999-9999-4999-8999-999999999999', 'pele-vs-maradona', 'Pelé vs Maradona', 'Football')
+  ('99999999-9999-4999-8999-999999999999', 'pele-vs-maradona', 'Pelé vs Maradona', 'Football'),
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'beyonce-vs-taylor-swift', 'Beyoncé vs Taylor Swift', 'Pop Music')
 on conflict (slug) do nothing;
 
 insert into public.contenders (id, debate_id, name, tagline, sort_order) values
@@ -143,11 +177,14 @@ insert into public.contenders (id, debate_id, name, tagline, sort_order) values
   ('88888888-8888-4888-8888-888888888889', '88888888-8888-4888-8888-888888888888', 'Tiger Woods', '15 majors', 1),
   ('88888888-8888-4888-8888-88888888888a', '88888888-8888-4888-8888-888888888888', 'Jack Nicklaus', '18 majors', 2),
   ('99999999-9999-4999-8999-99999999999a', '99999999-9999-4999-8999-999999999999', 'Pelé', '3× World Cup winner', 1),
-  ('99999999-9999-4999-8999-99999999999b', '99999999-9999-4999-8999-999999999999', 'Diego Maradona', '1986 World Cup winner', 2)
+  ('99999999-9999-4999-8999-99999999999b', '99999999-9999-4999-8999-999999999999', 'Diego Maradona', '1986 World Cup winner', 2),
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Beyoncé', '35× Grammy winner', 1),
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Taylor Swift', '14× Grammy winner', 2)
 on conflict (id) do nothing;
 
 -- Verification (run one at a time in the SQL editor):
--- select count(*) from public.debates;        -- expect 9
--- select count(*) from public.contenders;     -- expect 18
+-- select count(*) from public.debates;        -- expect 10
+-- select count(*) from public.contenders;     -- expect 20
+-- select count(*) from public.comments;       -- expect 0
 -- select proname, prosecdef, proconfig from public.pg_proc where proname = 'cast_vote';
 --   -- expect prosecdef true, proconfig ["search_path=\"\""]

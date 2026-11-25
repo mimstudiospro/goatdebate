@@ -11,11 +11,12 @@ const EXPECTED_SLUGS = [
   "hamilton-vs-schumacher",
   "woods-vs-nicklaus",
   "pele-vs-maradona",
+  "beyonce-vs-taylor-swift",
 ];
 
 describe("seed debates", () => {
-  it("has exactly the 9 launch debates", () => {
-    expect(SEED_DEBATES).toHaveLength(9);
+  it("has exactly the 10 launch debates", () => {
+    expect(SEED_DEBATES).toHaveLength(10);
     expect(SEED_DEBATES.map((d) => d.slug)).toEqual(EXPECTED_SLUGS);
   });
 
@@ -55,5 +56,15 @@ describe("seed debates", () => {
     expect(taglines).toContain("18 majors");
     expect(taglines).toContain("3× World Cup winner");
     expect(taglines).toContain("1986 World Cup winner");
+    expect(taglines).toContain("35× Grammy winner");
+    expect(taglines).toContain("14× Grammy winner");
+  });
+
+  it("includes the 10th debate, Beyoncé vs Taylor Swift (Pop Music)", () => {
+    const debate = SEED_DEBATES.find((d) => d.slug === "beyonce-vs-taylor-swift");
+    expect(debate).toBeDefined();
+    expect(debate?.title).toBe("Beyoncé vs Taylor Swift");
+    expect(debate?.sport).toBe("Pop Music");
+    expect(debate?.contenders.map((c) => c.name)).toEqual(["Beyoncé", "Taylor Swift"]);
   });
 });

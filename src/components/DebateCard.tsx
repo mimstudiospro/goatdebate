@@ -50,7 +50,7 @@ export default function DebateCard({ item }: { item: DebateWithTally }) {
 
       <div className="mt-4 border-t border-line pt-3 text-sm">
         {tally.total === 0 ? (
-          <span className="text-zinc-400">No votes yet — be the first to settle it.</span>
+          <span className="text-zinc-400">No votes yet — the floor is yours. End this argument.</span>
         ) : leaderName ? (
           <span>
             <span className="font-bold text-white">{leaderName}</span> leads ·{" "}
@@ -58,7 +58,7 @@ export default function DebateCard({ item }: { item: DebateWithTally }) {
           </span>
         ) : (
           <span>
-            Dead even · <span className="text-gold">Vote now →</span>
+            Dead even · <span className="text-gold">Your vote breaks it →</span>
           </span>
         )}
       </div>

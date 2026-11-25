@@ -15,7 +15,7 @@ export interface Debate {
 }
 
 /**
- * The 9 launch debates. Taglines use only established public facts.
+ * The 10 launch debates. Taglines use only established public facts.
  * This mirrors supabase/schema.sql exactly (same slugs, titles, sports,
  * names and taglines) so the app can render before the database is
  * connected — voting is disabled until then.
@@ -215,6 +215,28 @@ export const SEED_DEBATES: Debate[] = [
         debate_id: "99999999-9999-4999-8999-999999999999",
         name: "Diego Maradona",
         tagline: "1986 World Cup winner",
+        sort_order: 2,
+      },
+    ],
+  },
+  {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    slug: "beyonce-vs-taylor-swift",
+    title: "Beyoncé vs Taylor Swift",
+    sport: "Pop Music",
+    contenders: [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+        debate_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Beyoncé",
+        tagline: "35× Grammy winner",
+        sort_order: 1,
+      },
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac",
+        debate_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Taylor Swift",
+        tagline: "14× Grammy winner",
         sort_order: 2,
       },
     ],
