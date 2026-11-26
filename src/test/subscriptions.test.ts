@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MANAGE_SUBSCRIPTION_URL, PLANS, isActiveSubscription } from "../lib/subscriptions";
-import type { Subscription } from "../lib/subscriptions";
+import { MANAGE_SUBSCRIPTION_URL, PLANS, isActiveSubscription, subscribeUrl } from "../lib/subscriptions";
+import type { PlanDetails, Subscription } from "../lib/subscriptions";
 import { STRIPE_PAYMENT_LINKS, STRIPE_PORTAL_URL } from "../lib/stripe-config";
 
 const future = new Date(Date.now() + 86_400_000).toISOString();
@@ -59,5 +59,42 @@ describe("stripe config placeholders", () => {
     for (const plan of PLANS) {
       expect(plan.paymentLinkUrl).toBe("");
     }
+  });
+});
+
+describe("subscribeUrl", () => {
+  const plan: PlanDetails = {
+    id: "monthly",
+    name: "Monthly",
+    price: "$1",
+    interval: "per month",
+    blurb: "",
+    paymentLinkUrl: "https://buy.stripe.com/test_monthly",
+  };
+  const userId = "11111111-1111-4111-8111-111111111111";
+
+  it("attaches the fan as client_reference_id so the webhook can find them", () => {
+    expect(subscribeUrl(plan, userId)).toBe(
+      `https://buy.stripe.com/test_monthly?client_reference_id=${userId}`,
+    );
+  });
+
+  it("leaves the link untouched when signed out", () => {
+    expect(subscribeUrl(plan, null)).toBe("https://buy.stripe.com/test_monthly");
+  });
+
+  it("stays empty while the Payment Link is not set up", () => {
+    expect(subscribeUrl({ ...plan, paymentLinkUrl: "" }, userId)).toBe("");
+  });
+
+  it("joins with & when the link already has a query string, and encodes the id", () => {
+    expect(
+      subscribeUrl(
+        { ...plan, paymentLinkUrl: "https://buy.stripe.com/test_monthly?prefilled_email=a%40b.c" },
+        "user id/with spaces",
+      ),
+    ).toBe(
+      "https://buy.stripe.com/test_monthly?prefilled_email=a%40b.c&client_reference_id=user%20id%2Fwith%20spaces",
+    );
   });
 });

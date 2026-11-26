@@ -104,7 +104,7 @@ export default function CriteriaPage() {
                 </a>
               </div>
             )}
-            {user && <SubscribeSection subscription={subscription} />}
+            {user && <SubscribeSection subscription={subscription} userId={user.id} />}
           </div>
 
           <div className="mx-auto mt-8 max-w-2xl">

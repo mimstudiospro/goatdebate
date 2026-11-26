@@ -43,6 +43,22 @@ export const PLANS: PlanDetails[] = [
 export const MANAGE_SUBSCRIPTION_URL = STRIPE_PORTAL_URL;
 
 /**
+ * The checkout URL for a plan, with the signed-in fan attached when known.
+ * Stripe forwards a client_reference_id query parameter from a Payment Link
+ * onto the Checkout Session, and the main site's subscription webhook uses
+ * it to attach the new subscription to the fan — without it, the webhook
+ * has to fall back to matching the checkout email. Signed-out fans get the
+ * plain link (the button only shows while signed in, but the helper stays
+ * safe to call either way).
+ */
+export function subscribeUrl(plan: PlanDetails, userId: string | null): string {
+  if (!plan.paymentLinkUrl) return "";
+  if (!userId) return plan.paymentLinkUrl;
+  const joiner = plan.paymentLinkUrl.includes("?") ? "&" : "?";
+  return `${plan.paymentLinkUrl}${joiner}client_reference_id=${encodeURIComponent(userId)}`;
+}
+
+/**
  * True when a subscription counts for the contest: active (or trialing)
  * with a period end in the future, or cancelled but paid through a
  * future period end. Mirrors the server-side goat_is_subscriber check

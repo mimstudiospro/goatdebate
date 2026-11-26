@@ -2,6 +2,7 @@ import {
   MANAGE_SUBSCRIPTION_URL,
   PLANS,
   isActiveSubscription,
+  subscribeUrl,
 } from "../lib/subscriptions";
 import type { Subscription } from "../lib/subscriptions";
 
@@ -11,11 +12,15 @@ import type { Subscription } from "../lib/subscriptions";
  * (see src/lib/stripe-config.ts) the buttons stay disabled with an
  * honest note — the contest opens the moment the links are filled in.
  * A subscribed fan sees their plan and the manage link instead.
+ * The checkout URL carries the fan's user id as client_reference_id so
+ * the webhook can attach the subscription to them (see subscribeUrl).
  */
 export default function SubscribeSection({
   subscription,
+  userId,
 }: {
   subscription: Subscription | null;
+  userId: string | null;
 }) {
   const active = isActiveSubscription(subscription);
 
@@ -74,7 +79,7 @@ export default function SubscribeSection({
             <p className="mt-2 text-sm text-zinc-400">{plan.blurb}</p>
             {plan.paymentLinkUrl ? (
               <a
-                href={plan.paymentLinkUrl}
+                href={subscribeUrl(plan, userId)}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-4 block rounded-full bg-gold py-2.5 text-center text-sm font-black uppercase tracking-wide text-black transition-colors hover:bg-gold-deep"

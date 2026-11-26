@@ -321,3 +321,48 @@ describe("supabase/add-criteria.sql — GOAT of Criteria", () => {
     expect(sectionOf(migrate)).toBe(sectionOf(criteria));
   });
 });
+
+describe("supabase/add-subscription-webhook.sql — webhook lookup column", () => {
+  const webhook = readFileSync(
+    new URL("../../supabase/add-subscription-webhook.sql", import.meta.url),
+    "utf8",
+  );
+
+  it("adds stripe_subscription_id to subscriptions, idempotently", () => {
+    expect(webhook).toMatch(
+      /alter table public\.subscriptions\s+add column if not exists stripe_subscription_id text/i,
+    );
+    expect(webhook).toMatch(
+      /create index if not exists subscriptions_stripe_subscription_id_idx\s+on public\.subscriptions \(stripe_subscription_id\)/i,
+    );
+    // No policy, grant, or function changes, and no email address.
+    expect(webhook).not.toMatch(/create policy/i);
+    expect(webhook).not.toMatch(/grant /i);
+    expect(webhook).not.toMatch(/create or replace function/i);
+    expect(webhook).not.toMatch(/@/);
+  });
+
+  it("is mirrored in schema.sql and migrate-to-main-project.sql (section 7 verbatim)", () => {
+    const stripComments = (text: string): string =>
+      text
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .trim();
+    const sectionOf = (text: string): string => {
+      const start = text.indexOf("-- 7a.");
+      const endMarker = "on public.subscriptions (stripe_subscription_id);";
+      const end = text.indexOf(endMarker);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      return stripComments(text.slice(start, end + endMarker.length));
+    };
+    const schemaSql = readFileSync(new URL("../../supabase/schema.sql", import.meta.url), "utf8");
+    const migrate = readFileSync(
+      new URL("../../supabase/migrate-to-main-project.sql", import.meta.url),
+      "utf8",
+    );
+    expect(sectionOf(schemaSql)).toBe(sectionOf(webhook));
+    expect(sectionOf(migrate)).toBe(sectionOf(webhook));
+  });
+});

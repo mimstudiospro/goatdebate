@@ -759,6 +759,13 @@ $$;
 revoke all on function public.get_past_winners() from public, anon;
 grant execute on function public.get_past_winners() to anon, authenticated;
 
+-- 7a. The webhook records which Stripe subscription a row came from -------
+alter table public.subscriptions
+  add column if not exists stripe_subscription_id text;
+
+create index if not exists subscriptions_stripe_subscription_id_idx
+  on public.subscriptions (stripe_subscription_id);
+
 -- Verification (run one at a time in the SQL editor):
 -- select count(*) from public.debates;        -- expect 10
 -- select count(*) from public.contenders;     -- expect 20
