@@ -50,14 +50,15 @@ describe("plans", () => {
   });
 });
 
-describe("stripe config placeholders", () => {
-  it("ships with empty Payment Link and portal URLs — no invented links", () => {
-    expect(STRIPE_PAYMENT_LINKS.monthly).toBe("");
-    expect(STRIPE_PAYMENT_LINKS.yearly).toBe("");
-    expect(STRIPE_PORTAL_URL).toBe("");
-    expect(MANAGE_SUBSCRIPTION_URL).toBe("");
+describe("stripe config links", () => {
+  it("points at real Stripe Payment Links and the Customer Portal — no invented links", () => {
+    for (const url of [STRIPE_PAYMENT_LINKS.monthly, STRIPE_PAYMENT_LINKS.yearly]) {
+      expect(url.startsWith("https://buy.stripe.com/")).toBe(true);
+    }
+    expect(STRIPE_PORTAL_URL.startsWith("https://billing.stripe.com/")).toBe(true);
+    expect(MANAGE_SUBSCRIPTION_URL).toBe(STRIPE_PORTAL_URL);
     for (const plan of PLANS) {
-      expect(plan.paymentLinkUrl).toBe("");
+      expect(plan.paymentLinkUrl).toBe(STRIPE_PAYMENT_LINKS[plan.id]);
     }
   });
 });
