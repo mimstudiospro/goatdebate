@@ -122,6 +122,10 @@ create policy "subscriptions_owner_read" on public.subscriptions
   for select to authenticated using (auth.uid() = user_id);
 
 grant select on public.subscriptions to authenticated;
+-- Lovable Cloud grants SELECT to anon on new tables by default: revoke it
+-- (same lesson as the comments table) - anon must not hold the privilege;
+-- RLS plus the owner-only policy already blocks row reads, this closes the grant.
+revoke select on public.subscriptions from anon;
 revoke insert, update, delete on public.subscriptions from anon, authenticated;
 
 -- 6e. Votes also record the fan, when signed in ----------------------------
