@@ -1,7 +1,10 @@
 export interface Comment {
   id: string;
   debate_id: string;
-  voter_token: string;
+  /** True when this comment was posted by this browser. Computed
+   * server-side by the get_comments RPC — the token itself never
+   * leaves the database, so no visitor can see another browser's. */
+  is_mine: boolean;
   author_name: string;
   body: string;
   created_at: string;

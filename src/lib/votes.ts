@@ -24,6 +24,21 @@ export function tallyFromVotes(votes: { contender_id: string }[]): Tally {
 }
 
 /**
+ * Tally from per-contender count rows, as returned by the
+ * get_vote_counts RPC. The RPC returns bare counts — no voter tokens
+ * ever reach the client — so tallies are built from numbers, not rows.
+ */
+export function tallyFromCountRows(rows: { contender_id: string; votes: number }[]): Tally {
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    counts[row.contender_id] = row.votes;
+    total += row.votes;
+  }
+  return { counts, total };
+}
+
+/**
  * Percentages for exactly the given contender ids, in order.
  * With 0 votes every share is 0. Otherwise the first contender's share
  * is rounded and the second gets the remainder, so shares always sum

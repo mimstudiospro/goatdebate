@@ -1,7 +1,7 @@
 import { supabase, supabaseConfigured } from "./supabase";
 import { SEED_DEBATES } from "./debates";
 import type { Debate } from "./debates";
-import { emptyTally, tallyFromVotes } from "./votes";
+import { emptyTally, tallyFromCountRows } from "./votes";
 import type { Tally } from "./votes";
 import type { Comment } from "./comments";
 
@@ -27,36 +27,53 @@ interface ContenderRow {
   sort_order: number;
 }
 
-interface VoteRow {
+interface CountRow {
   debate_id: string;
   contender_id: string;
-  voter_token: string;
+  votes: number;
+}
+
+interface MyVoteRow {
+  debate_id: string;
+  contender_id: string;
 }
 
 /**
  * Load every debate with live tallies and this browser's votes.
  * When Supabase is unconfigured, returns the seed debates with zero
  * votes and voting disabled (the caller checks supabaseConfigured).
+ *
+ * Tallies come from the get_vote_counts RPC and this browser's votes
+ * from get_my_votes — the client never reads the votes table directly,
+ * so no voter_token ever reaches the browser.
  */
 export async function fetchAllDebates(voterToken: string): Promise<DebateWithTally[]> {
   if (!supabaseConfigured || !supabase) {
     return SEED_DEBATES.map((debate) => ({ debate, tally: emptyTally(), myVote: null }));
   }
 
-  const [{ data: debateRows, error: debateErr }, { data: contenderRows, error: contenderErr }, { data: voteRows, error: voteErr }] =
-    await Promise.all([
-      supabase.from("debates").select("id, slug, title, sport").order("created_at", { ascending: true }),
-      supabase.from("contenders").select("id, debate_id, name, tagline, sort_order").order("sort_order", { ascending: true }),
-      supabase.from("votes").select("debate_id, contender_id, voter_token"),
-    ]);
+  const [
+    { data: debateRows, error: debateErr },
+    { data: contenderRows, error: contenderErr },
+    { data: countRows, error: countErr },
+    { data: myVoteRows, error: myVoteErr },
+  ] = await Promise.all([
+    supabase.from("debates").select("id, slug, title, sport").order("created_at", { ascending: true }),
+    supabase.from("contenders").select("id, debate_id, name, tagline, sort_order").order("sort_order", { ascending: true }),
+    supabase.rpc("get_vote_counts"),
+    supabase.rpc("get_my_votes", { _voter: voterToken }),
+  ]);
 
-  if (debateErr || contenderErr || voteErr) {
-    throw new Error(debateErr?.message ?? contenderErr?.message ?? voteErr?.message ?? "Failed to load debates");
+  if (debateErr || contenderErr || countErr || myVoteErr) {
+    throw new Error(
+      debateErr?.message ?? contenderErr?.message ?? countErr?.message ?? myVoteErr?.message ?? "Failed to load debates",
+    );
   }
 
   const debates = (debateRows ?? []) as DebateRow[];
   const contenders = (contenderRows ?? []) as ContenderRow[];
-  const votes = (voteRows ?? []) as VoteRow[];
+  const counts = (countRows ?? []) as CountRow[];
+  const myVotes = (myVoteRows ?? []) as MyVoteRow[];
 
   // Fall back to the seed debates if the database has none yet (schema applied, seeds not run).
   const source: Debate[] =
@@ -73,11 +90,10 @@ export async function fetchAllDebates(voterToken: string): Promise<DebateWithTal
         }));
 
   return source.map((debate) => {
-    const debateVotes = votes.filter((v) => v.debate_id === debate.id);
-    const mine = debateVotes.find((v) => v.voter_token === voterToken);
+    const mine = myVotes.find((v) => v.debate_id === debate.id);
     return {
       debate,
-      tally: tallyFromVotes(debateVotes.map((v) => ({ contender_id: v.contender_id }))),
+      tally: tallyFromCountRows(counts.filter((c) => c.debate_id === debate.id)),
       myVote: mine ? mine.contender_id : null,
     };
   });
@@ -99,27 +115,36 @@ export async function castVote(debateId: string, contenderId: string, voterToken
 interface CommentRow {
   id: string;
   debate_id: string;
-  voter_token: string;
+  is_mine: boolean;
   author_name: string;
   body: string;
   created_at: string;
 }
 
-/** Load a debate's comments, newest first. Empty when unconfigured. */
-export async function fetchComments(debateId: string): Promise<Comment[]> {
+/**
+ * Load a debate's comments, newest first. Empty when unconfigured.
+ * Served by the get_comments RPC, which returns an is_mine flag
+ * computed server-side — the client never reads the comments table
+ * directly, so no voter_token ever reaches the browser.
+ */
+export async function fetchComments(debateId: string, voterToken: string): Promise<Comment[]> {
   if (!supabaseConfigured || !supabase) {
     return [];
   }
-  const { data, error } = await supabase
-    .from("comments")
-    .select("id, debate_id, voter_token, author_name, body, created_at")
-    .eq("debate_id", debateId)
-    .order("created_at", { ascending: false });
+  const { data, error } = await supabase.rpc("get_comments", {
+    _debate: debateId,
+    _voter: voterToken,
+  });
   if (error) throw new Error(error.message);
   return (data ?? []) as CommentRow[];
 }
 
-/** Post a comment. The caller validates (length, filter) first. */
+/**
+ * Post a comment. The caller validates (length, filter) first.
+ * The insert carries this browser's OWN token to the server — that is
+ * not a leak — and the returned row omits voter_token entirely; the
+ * comment is this browser's own, so is_mine is true.
+ */
 export async function postComment(
   debateId: string,
   authorName: string,
@@ -132,8 +157,9 @@ export async function postComment(
   const { data, error } = await supabase
     .from("comments")
     .insert({ debate_id: debateId, voter_token: voterToken, author_name: authorName, body })
-    .select("id, debate_id, voter_token, author_name, body, created_at")
+    .select("id, debate_id, author_name, body, created_at")
     .single();
   if (error) throw new Error(error.message);
-  return data as CommentRow;
+  const row = data as Omit<CommentRow, "is_mine">;
+  return { ...row, is_mine: true };
 }

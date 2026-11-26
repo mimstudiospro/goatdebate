@@ -16,10 +16,13 @@
 -- pins SET search_path = '' and its body is fully schema-qualified
 -- (public.* tables, pg_catalog builtins only) — never relax this.
 --
--- RLS: public read on debates, contenders, votes, comments and
--- published articles; anon may insert votes directly (the app uses the
--- RPC; the unique constraint still enforces one vote per browser per
--- debate either way). Article writes require a row in public.admins —
+-- RLS: public read on debates, contenders and published articles.
+-- votes has NO direct access at all (no policies, no grants): tallies
+-- come from get_vote_counts, a browser's own votes from get_my_votes,
+-- writes go through cast_vote only. comments are readable on the display
+-- columns only (voter_token is excluded); the list is served by the
+-- get_comments RPC, which returns an is_mine flag instead of the token.
+-- Article writes require a row in public.admins —
 -- see section 5; no email address appears in code or SQL.
 
 -- 1. Tables ---------------------------------------------------------------
@@ -65,13 +68,15 @@ drop policy if exists "contenders_public_read" on public.contenders;
 create policy "contenders_public_read" on public.contenders
   for select to anon, authenticated using (true);
 
+-- votes is RPC-only by design (voter_token exposure fix): no policies
+-- and no grants for anon/authenticated. The only paths are the SECURITY
+-- DEFINER functions cast_vote (write), get_vote_counts (tallies) and
+-- get_my_votes (this browser's votes). RLS stays enabled with no
+-- policies, so even a future grant cannot leak rows. The revoke lines
+-- keep this file idempotent on a database that still has the old grants.
 drop policy if exists "votes_public_read" on public.votes;
-create policy "votes_public_read" on public.votes
-  for select to anon, authenticated using (true);
-
 drop policy if exists "votes_anon_insert" on public.votes;
-create policy "votes_anon_insert" on public.votes
-  for insert to anon with check (true);
+revoke select, insert on public.votes from anon, authenticated;
 
 -- 2b. Table privileges -----------------------------------------------------
 -- RLS policies alone are NOT enough: the anon/authenticated roles also
@@ -81,7 +86,7 @@ create policy "votes_anon_insert" on public.votes
 -- that is how this was missed the first time.
 grant select on public.debates to anon, authenticated;
 grant select on public.contenders to anon, authenticated;
-grant select, insert on public.votes to anon, authenticated;
+-- No grant on public.votes: RPC-only (see above).
 
 -- 2c. Comments table -------------------------------------------------------
 -- No sign-in: voter_token identifies the browser (same token as votes),
@@ -113,7 +118,14 @@ drop policy if exists "comments_anon_insert" on public.comments;
 create policy "comments_anon_insert" on public.comments
   for insert to anon with check (true);
 
-grant select, insert on public.comments to anon, authenticated;
+-- The SELECT grant covers only the display columns: voter_token is
+-- deliberately excluded, so no visitor can read another browser's
+-- token. The list is served by get_comments (section 3b), which returns
+-- an is_mine flag computed server-side. The direct INSERT path stays:
+-- a browser posts its OWN token, which is not a leak.
+grant select (id, debate_id, author_name, body, created_at)
+  on public.comments to anon, authenticated;
+grant insert on public.comments to anon, authenticated;
 
 -- 3. cast_vote — the ONLY write path the app uses --------------------------
 -- Upserts by (debate_id, voter_token): first vote inserts, changing a
@@ -145,6 +157,70 @@ $$;
 
 revoke all on function public.cast_vote(uuid, uuid, text) from public, anon;
 grant execute on function public.cast_vote(uuid, uuid, text) to anon, authenticated;
+
+-- 3b. Read RPCs — the only read paths for votes and comments ---------------
+-- These replace the old client-side table reads, which downloaded every
+-- voter_token. No response from any of these contains another browser's
+-- token: tallies are bare counts, get_my_votes returns only rows for the
+-- token the caller sends, and get_comments returns an is_mine flag.
+create or replace function public.get_vote_counts()
+returns table (debate_id uuid, contender_id uuid, votes bigint)
+language sql
+security definer
+set search_path = ''
+as $$
+  select
+    public.votes.debate_id,
+    public.votes.contender_id,
+    count(*)::bigint as vote_count
+  from public.votes
+  group by public.votes.debate_id, public.votes.contender_id;
+$$;
+
+revoke all on function public.get_vote_counts() from public, anon;
+grant execute on function public.get_vote_counts() to anon, authenticated;
+
+create or replace function public.get_my_votes(_voter text)
+returns table (debate_id uuid, contender_id uuid)
+language sql
+security definer
+set search_path = ''
+as $$
+  select public.votes.debate_id, public.votes.contender_id
+  from public.votes
+  where public.votes.voter_token = _voter;
+$$;
+
+revoke all on function public.get_my_votes(text) from public, anon;
+grant execute on function public.get_my_votes(text) to anon, authenticated;
+
+create or replace function public.get_comments(_debate uuid, _voter text)
+returns table (
+  id uuid,
+  debate_id uuid,
+  author_name text,
+  body text,
+  created_at timestamptz,
+  is_mine boolean
+)
+language sql
+security definer
+set search_path = ''
+as $$
+  select
+    public.comments.id,
+    public.comments.debate_id,
+    public.comments.author_name,
+    public.comments.body,
+    public.comments.created_at,
+    (public.comments.voter_token = _voter) as is_mine
+  from public.comments
+  where public.comments.debate_id = _debate
+  order by public.comments.created_at desc;
+$$;
+
+revoke all on function public.get_comments(uuid, text) from public, anon;
+grant execute on function public.get_comments(uuid, text) to anon, authenticated;
 
 -- 4. Seed debates (idempotent) ---------------------------------------------
 -- Fixed UUIDs match src/lib/debates.ts exactly, so the app's offline
@@ -194,6 +270,12 @@ on conflict (id) do nothing;
 -- select count(*) from public.admins;         -- expect 0 until the owner's row is inserted
 -- select proname, prosecdef, proconfig from public.pg_proc where proname = 'cast_vote';
 --   -- expect prosecdef true, proconfig ["search_path=\"\""]
+-- select proname, prosecdef, proconfig from public.pg_proc
+--   where proname in ('get_vote_counts', 'get_my_votes', 'get_comments');
+--   -- expect all three prosecdef true, proconfig ["search_path=\"\""]
+-- select has_table_privilege('anon', 'public.votes', 'SELECT');                    -- expect false
+-- select has_column_privilege('anon', 'public.comments', 'voter_token', 'SELECT'); -- expect false
+-- select has_column_privilege('anon', 'public.comments', 'body', 'SELECT');        -- expect true
 -- select proname, prosecdef, proconfig from public.pg_proc where proname in ('is_admin', 'set_articles_updated_at');
 --   -- expect both prosecdef true, proconfig ["search_path=\"\""]
 

@@ -17,13 +17,21 @@ describe("supabase/schema.sql", () => {
     expect(sql).toMatch(/unique\s*\(\s*debate_id\s*,\s*voter_token\s*\)/i);
   });
 
-  it("enables RLS with public reads and anon vote inserts", () => {
+  it("enables RLS: public reads on debates/contenders, votes RPC-only, comments anon insert", () => {
     expect(sql).toMatch(/alter table public\.debates enable row level security/i);
     expect(sql).toMatch(/alter table public\.votes enable row level security/i);
+    expect(sql).toMatch(/alter table public\.comments enable row level security/i);
+    // votes must have NO public-read or anon-insert policy: tallies and
+    // writes go through the SECURITY DEFINER RPCs only.
+    expect(sql).not.toMatch(/create policy "votes_public_read"/i);
+    expect(sql).not.toMatch(/create policy "votes_anon_insert"/i);
+    expect(sql).toMatch(/revoke select, insert on public\.votes from anon, authenticated/i);
+    // comments keep their anon insert path (a browser posts its OWN token).
+    expect(sql).toMatch(/create policy "comments_anon_insert" on public\.comments/i);
     expect(sql).toMatch(/for insert to anon/i);
   });
 
-  it("defines the comments table with shape checks, public read + anon insert, and grants", () => {
+  it("defines the comments table with shape checks, column-level read + anon insert, and grants", () => {
     expect(sql).toMatch(/create table if not exists public\.comments/i);
     expect(sql).toMatch(/debate_id uuid not null references public\.debates \(id\) on delete cascade/i);
     expect(sql).toMatch(/comments_body_max_length check \(char_length\(body\) <= 500\)/i);
@@ -32,7 +40,10 @@ describe("supabase/schema.sql", () => {
     expect(sql).toMatch(/alter table public\.comments enable row level security/i);
     expect(sql).toMatch(/create policy "comments_public_read" on public\.comments/i);
     expect(sql).toMatch(/create policy "comments_anon_insert" on public\.comments/i);
-    expect(sql).toMatch(/grant select, insert on public\.comments to anon, authenticated/i);
+    // Read grant covers ONLY the display columns — voter_token is excluded.
+    expect(sql).toMatch(/grant select \(id, debate_id, author_name, body, created_at\)\s*on public\.comments to anon, authenticated/i);
+    expect(sql).not.toMatch(/grant select, insert on public\.comments/i);
+    expect(sql).toMatch(/grant insert on public\.comments to anon, authenticated/i);
   });
 
   it("defines cast_vote with a pinned empty search_path and a qualified body", () => {
@@ -114,6 +125,18 @@ describe("supabase/schema.sql", () => {
     expect(addArticles).not.toMatch(/create table if not exists public\.debates/i);
     expect(addArticles).not.toMatch(/create table if not exists public\.votes/i);
     expect(addArticles).not.toMatch(/create table if not exists public\.comments/i);
+  });
+
+  it("defines the vote/comment read RPCs with pinned empty search_paths", () => {
+    for (const fn of ["get_vote_counts", "get_my_votes", "get_comments"]) {
+      expect(sql).toMatch(new RegExp(`create or replace function public\\.${fn}`, "i"));
+      expect(sql).toMatch(new RegExp(`grant execute on function public\\.${fn}`, "i"));
+    }
+    expect(sql).toMatch(/set search_path = ''/i);
+    // get_comments returns is_mine, never the token.
+    expect(sql).toMatch(/\(public\.comments\.voter_token = _voter\) as is_mine/i);
+    // get_my_votes only ever returns rows for the token the caller sends.
+    expect(sql).toMatch(/where public\.votes\.voter_token = _voter/i);
   });
 
   it("add-comments.sql creates only the comments table, idempotently", () => {

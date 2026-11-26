@@ -29,14 +29,14 @@ export default function DebateComments({
 
   const load = useCallback(async () => {
     try {
-      setComments(await fetchComments(debateId));
+      setComments(await fetchComments(debateId, myToken));
       setLoadError(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load comments");
     } finally {
       setLoading(false);
     }
-  }, [debateId]);
+  }, [debateId, myToken]);
 
   useEffect(() => {
     void load();
@@ -101,7 +101,7 @@ export default function DebateComments({
               <div className="flex items-baseline justify-between gap-3">
                 <span className="text-sm font-bold text-white">
                   {c.author_name}
-                  {c.voter_token === myToken && (
+                  {c.is_mine && (
                     <span className="ml-2 rounded-full bg-gold px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-black">
                       You
                     </span>
