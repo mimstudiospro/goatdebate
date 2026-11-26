@@ -7,6 +7,22 @@ const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
 /** True only when both Lovable Cloud env vars are set. */
 export const supabaseConfigured = Boolean(url && key);
 
-/** Null when unconfigured — the app must not crash, it just shows debates with voting disabled. */
+/**
+ * Null when unconfigured — the app must not crash, it just shows debates with voting disabled.
+ *
+ * Auth is PKCE, not implicit: the Google OAuth callback arrives as a
+ * `?code=` query param. The hash router owns the URL fragment, so an
+ * `#access_token` fragment would break routing. `detectSessionInUrl`
+ * exchanges that `?code=` for a session when the client is created
+ * (before the app renders), so a returning OAuth user is signed in
+ * on load — `getSession()` awaits that exchange.
+ */
 export const supabase: SupabaseClient | null =
-  supabaseConfigured && url && key ? createClient(url, key) : null;
+  supabaseConfigured && url && key
+    ? createClient(url, key, {
+        auth: {
+          flowType: "pkce",
+          detectSessionInUrl: true,
+        },
+      })
+    : null;

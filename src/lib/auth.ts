@@ -46,6 +46,54 @@ export async function signInWithPassword(email: string, password: string): Promi
   if (error) throw new Error(error.message);
 }
 
+/** sessionStorage key holding the hash route to return to after a Google OAuth callback. */
+const OAUTH_RETURN_KEY = "goatdebate-oauth-return";
+
+/**
+ * Sign in with Google — the owner's sign-in on the main site, and the
+ * same account system here. The main project's Google provider is
+ * already configured; this just starts the OAuth flow. The callback
+ * returns to the site origin with a `?code=` param (PKCE), which the
+ * Supabase client exchanges for a session on load. Throws with the
+ * Supabase message. The browser leaves for Google on success, so the
+ * caller should not expect to continue after the await resolves.
+ */
+export async function signInWithGoogle(): Promise<void> {
+  if (!supabaseConfigured || !supabase) {
+    throw new Error("Sign-in is not connected yet");
+  }
+  // Remember where the user was, so the callback can take them back.
+  // The sign-in page itself is not a useful destination — home is.
+  const hash = window.location.hash;
+  if (hash && hash !== "#/signin") {
+    try {
+      window.sessionStorage.setItem(OAUTH_RETURN_KEY, hash);
+    } catch {
+      // Storage unavailable (private mode, etc.) — home is the fallback.
+    }
+  }
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: `${window.location.origin}/` },
+  });
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * After an OAuth callback, the hash route saved by signInWithGoogle,
+ * or null. Consumed once — the key is removed whether or not a value
+ * was stored, so a stale key from an abandoned attempt never fires.
+ */
+export function consumeOAuthReturn(): string | null {
+  try {
+    const hash = window.sessionStorage.getItem(OAUTH_RETURN_KEY);
+    window.sessionStorage.removeItem(OAUTH_RETURN_KEY);
+    return hash;
+  } catch {
+    return null;
+  }
+}
+
 /** Sign out the current user. */
 export async function signOut(): Promise<void> {
   if (!supabaseConfigured || !supabase) return;

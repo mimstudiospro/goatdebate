@@ -1,13 +1,39 @@
 import { useState } from "react";
-import { signInWithPassword } from "../lib/auth";
+import { signInWithGoogle, signInWithPassword } from "../lib/auth";
 import { supabaseConfigured } from "../lib/supabase";
 
-/** Email + password sign-in. The owner account is created in the
- * Supabase dashboard; there is no public sign-up here. */
+/** Google "G" mark for the Continue with Google button. */
+function GoogleMark() {
+  return (
+    <svg className="h-[18px] w-[18px]" viewBox="0 0 48 48" aria-hidden="true">
+      <path
+        fill="#FFC107"
+        d="M43.611 20.083H42V20H24v8h11.303C33.654 32.657 29.223 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"
+      />
+      <path
+        fill="#FF3D00"
+        d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"
+      />
+      <path
+        fill="#4CAF50"
+        d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"
+      />
+      <path
+        fill="#1976D2"
+        d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571.001-.001.002-.001.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"
+      />
+    </svg>
+  );
+}
+
+/** Email + password sign-in, plus Continue with Google. The owner
+ * account is created in the Supabase dashboard; there is no public
+ * sign-up here. */
 export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -30,6 +56,20 @@ export default function SignInPage() {
     }
   }
 
+  async function google() {
+    if (googleBusy) return;
+    setGoogleBusy(true);
+    setError(null);
+    try {
+      // On success the browser leaves for Google; nothing runs after.
+      await signInWithGoogle();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Google sign-in failed — try again.");
+    } finally {
+      setGoogleBusy(false);
+    }
+  }
+
   return (
     <section className="mx-auto max-w-md pt-10 sm:pt-14">
       <h1 className="text-center text-4xl font-black tracking-tight">
@@ -39,8 +79,24 @@ export default function SignInPage() {
         Sign in to write articles and posts. Everyone else just votes.
       </p>
 
+      <button
+        type="button"
+        onClick={() => void google()}
+        disabled={googleBusy || signingIn || !supabaseConfigured}
+        className="mt-8 flex w-full items-center justify-center gap-3 rounded-full border border-line bg-panel-2 py-3 text-sm font-bold text-zinc-100 transition-colors hover:border-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <GoogleMark />
+        {googleBusy ? "Opening Google…" : "Continue with Google"}
+      </button>
+
+      <div className="mt-5 flex items-center gap-3 text-xs text-zinc-500" aria-hidden="true">
+        <span className="h-px flex-1 bg-line" />
+        <span>or sign in with email</span>
+        <span className="h-px flex-1 bg-line" />
+      </div>
+
       <form
-        className="mt-8 rounded-2xl border border-line bg-panel p-4 sm:p-5"
+        className="mt-5 rounded-2xl border border-line bg-panel p-4 sm:p-5"
         onSubmit={(e) => {
           e.preventDefault();
           void submit();

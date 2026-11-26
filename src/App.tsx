@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchAllDebates } from "./lib/api";
 import type { DebateWithTally } from "./lib/api";
-import { fetchIsAdmin, signOut, useSession } from "./lib/auth";
+import { consumeOAuthReturn, fetchIsAdmin, signOut, useSession } from "./lib/auth";
 import { parseHash } from "./lib/routes";
 import type { Route } from "./lib/routes";
 import { supabaseConfigured } from "./lib/supabase";
@@ -50,6 +50,21 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  // After a Google OAuth callback lands on the bare origin (no hash),
+  // take the user back to the page they were on when they clicked
+  // "Continue with Google" — or home when there was none. Only when
+  // the URL has no hash: a stale key from an abandoned attempt must
+  // not yank the user away from wherever they are.
+  useEffect(() => {
+    if (!user) return;
+    const hash = window.location.hash;
+    if (hash && hash !== "#/" && hash !== "#/signin") return;
+    const backTo = consumeOAuthReturn();
+    if (backTo && backTo !== hash) {
+      window.location.hash = backTo;
+    }
+  }, [user]);
 
   // Admin status is a UI convenience only — RLS enforces article
   // writes server-side regardless of what the header shows.
