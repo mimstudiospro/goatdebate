@@ -26,7 +26,7 @@ describe("supabase/schema.sql", () => {
     expect(sql).toMatch(/unique\s*\(\s*debate_id\s*,\s*voter_token\s*\)/i);
   });
 
-  it("enables RLS: public reads on debates/contenders, votes RPC-only, comments anon insert", () => {
+  it("enables RLS: public reads on debates/contenders, votes RPC-only, comments sign-in only", () => {
     expect(sql).toMatch(/alter table public\.debates enable row level security/i);
     expect(sql).toMatch(/alter table public\.votes enable row level security/i);
     expect(sql).toMatch(/alter table public\.comments enable row level security/i);
@@ -35,9 +35,13 @@ describe("supabase/schema.sql", () => {
     expect(sql).not.toMatch(/create policy "votes_public_read"/i);
     expect(sql).not.toMatch(/create policy "votes_anon_insert"/i);
     expect(sql).toMatch(/revoke select, insert on public\.votes from anon, authenticated/i);
-    // comments keep their anon insert path (a browser posts its OWN token).
-    expect(sql).toMatch(/create policy "comments_anon_insert" on public\.comments/i);
-    expect(sql).toMatch(/for insert to anon/i);
+    // Comments are gated on sign-in now: only an authenticated fan can
+    // insert, and only as themself. The anonymous policy is dropped,
+    // never created (the DROP line in section 6 names it to remove it).
+    expect(sql).not.toMatch(/create policy "comments_anon_insert"/i);
+    expect(sql).toMatch(/drop policy if exists "comments_anon_insert" on public\.comments/i);
+    expect(sql).toMatch(/create policy "comments_auth_insert" on public\.comments/i);
+    expect(sql).toMatch(/for insert to authenticated with check \(auth\.uid\(\) = user_id\)/i);
   });
 
   it("defines the comments table with shape checks, column-level read + anon insert, and grants", () => {
@@ -48,7 +52,8 @@ describe("supabase/schema.sql", () => {
     expect(sql).toMatch(/comments_author_max_length check \(char_length\(author_name\) <= 40\)/i);
     expect(sql).toMatch(/alter table public\.comments enable row level security/i);
     expect(sql).toMatch(/create policy "comments_public_read" on public\.comments/i);
-    expect(sql).toMatch(/create policy "comments_anon_insert" on public\.comments/i);
+    expect(sql).toMatch(/create policy "comments_auth_insert" on public\.comments/i);
+    // The auth insert policy checks the row belongs to the caller.
     // Read grant covers ONLY the display columns — voter_token is excluded.
     expect(sql).toMatch(/grant select \(id, debate_id, author_name, body, created_at\)\s*on public\.comments to anon, authenticated/i);
     expect(sql).not.toMatch(/grant select, insert on public\.comments/i);
@@ -178,8 +183,8 @@ describe("supabase/schema.sql", () => {
       expect(sql).toMatch(new RegExp(`grant execute on function public\\.${fn}`, "i"));
     }
     expect(sql).toMatch(/set search_path = ''/i);
-    // get_comments returns is_mine, never the token.
-    expect(sql).toMatch(/\(public\.comments\.voter_token = _voter\) as is_mine/i);
+    // get_comments returns is_mine from the signed-in user id, never the token.
+    expect(sql).toMatch(/\(c\.user_id is not null and c\.user_id = auth\.uid\(\)\) as is_mine/i);
     // get_my_votes only ever returns rows for the token the caller sends.
     expect(sql).toMatch(/where public\.votes\.voter_token = _voter/i);
   });
@@ -195,5 +200,124 @@ describe("supabase/schema.sql", () => {
     expect(addComments).not.toMatch(/create table if not exists public\.debates/i);
     expect(addComments).not.toMatch(/create table if not exists public\.votes/i);
     expect(addComments).not.toMatch(/create table if not exists public\.contenders/i);
+  });
+});
+
+describe("supabase/add-criteria.sql — GOAT of Criteria", () => {
+  const criteria = readFileSync(
+    new URL("../../supabase/add-criteria.sql", import.meta.url),
+    "utf8",
+  );
+
+  it("creates goat_profiles, comment_likes and subscriptions — and no new articles/admins table", () => {
+    expect(criteria).toMatch(/create table if not exists public\.goat_profiles/i);
+    expect(criteria).toMatch(/user_id uuid primary key references auth\.users \(id\)/i);
+    expect(criteria).toMatch(/goat_profiles_name_max_length check \(char_length\(display_name\) <= 40\)/i);
+    expect(criteria).toMatch(/create table if not exists public\.comment_likes/i);
+    expect(criteria).toMatch(/primary key \(comment_id, user_id\)/i);
+    expect(criteria).toMatch(/create table if not exists public\.subscriptions/i);
+    expect(criteria).toMatch(/plan text not null check \(plan in \('monthly', 'yearly'\)\)/i);
+    expect(criteria).toMatch(/unique \(user_id\)/i);
+    expect(criteria).not.toMatch(/create table if not exists public\.articles/i);
+    expect(criteria).not.toMatch(/create table if not exists public\.admins/i);
+    // No email address and no live voter_token may ever appear in it.
+    expect(criteria).not.toMatch(/@/);
+  });
+
+  it("gates comments on sign-in and records the fan on votes", () => {
+    expect(criteria).toMatch(
+      /alter table public\.comments add column if not exists user_id uuid references auth\.users/i,
+    );
+    expect(criteria).not.toMatch(/create policy "comments_anon_insert"/i);
+    expect(criteria).toMatch(/create policy "comments_auth_insert" on public\.comments/i);
+    expect(criteria).toMatch(
+      /for insert to authenticated with check \(auth\.uid\(\) = user_id\)/i,
+    );
+    expect(criteria).toMatch(
+      /alter table public\.votes add column if not exists user_id uuid references auth\.users/i,
+    );
+  });
+
+  it("keeps likes RPC-only and subscriptions owner-read only", () => {
+    expect(criteria).toMatch(/alter table public\.comment_likes enable row level security/i);
+    expect(criteria).toMatch(/revoke all on public\.comment_likes from anon, authenticated/i);
+    expect(criteria).not.toMatch(/create policy .* on public\.comment_likes/i);
+    expect(criteria).toMatch(/create policy "subscriptions_owner_read" on public\.subscriptions/i);
+    expect(criteria).toMatch(/for select to authenticated using \(auth\.uid\(\) = user_id\)/i);
+    expect(criteria).toMatch(/grant select on public\.subscriptions to authenticated/i);
+    expect(criteria).toMatch(
+      /revoke insert, update, delete on public\.subscriptions from anon, authenticated/i,
+    );
+    expect(criteria).toMatch(/create policy "goat_profiles_public_read" on public\.goat_profiles/i);
+  });
+
+  it("defines the like, board and subscription RPCs as SECURITY DEFINER with pinned search_path", () => {
+    for (const fn of [
+      "like_comment",
+      "unlike_comment",
+      "get_leaderboard",
+      "get_my_subscription",
+      "get_past_winners",
+    ]) {
+      expect(criteria).toMatch(new RegExp(`create or replace function public\\.${fn}`, "i"));
+      expect(criteria).toMatch(new RegExp(`grant execute on function public\\.${fn}`, "i"));
+    }
+    // The two internal helpers are defined but have NO execute grant:
+    // only the SECURITY DEFINER board functions call them, as the owner.
+    for (const fn of ["goat_is_subscriber", "goat_month_scores"]) {
+      expect(criteria).toMatch(new RegExp(`create or replace function public\\.${fn}`, "i"));
+      expect(criteria).not.toMatch(new RegExp(`grant execute on function public\\.${fn}`, "i"));
+    }
+    expect(criteria).toMatch(/security definer/i);
+    expect(criteria).toMatch(/set search_path = ''/i);
+  });
+
+  it("scores a month 1 / 2 / 1 with earliest-first tie-break, subscribers only", () => {
+    expect(criteria).toMatch(/count\(distinct v\.debate_id\)/i);
+    expect(criteria).toMatch(/coalesce\(cp\.n, 0\) \* 2/i);
+    expect(criteria).toMatch(/where public\.goat_is_subscriber\(s\.user_id\)/i);
+    expect(criteria).toMatch(/order by s\.points desc, s\.first_scored_at asc/i);
+    expect(criteria).toMatch(/row_number\(\) over \(/i);
+    expect(criteria).toMatch(/partition by mo\.m/i);
+  });
+
+  it("cast_vote records the fan id and drops a forged one", () => {
+    expect(criteria).toMatch(
+      /create or replace function public\.cast_vote\(_debate uuid, _contender uuid, _voter text, _user uuid default null\)/i,
+    );
+    expect(criteria).toMatch(/if _user is distinct from auth\.uid\(\) then/i);
+    expect(criteria).toMatch(/user_id = coalesce\(excluded\.user_id, public\.votes\.user_id\)/i);
+    expect(criteria).toMatch(/on conflict \(debate_id, voter_token\)/i);
+  });
+
+  it("get_comments returns likes and is_mine from the user id, never the token", () => {
+    expect(criteria).toMatch(/create or replace function public\.get_comments\(_debate uuid\)/i);
+    expect(criteria).toMatch(/\(c\.user_id is not null and c\.user_id = auth\.uid\(\)\) as is_mine/i);
+    expect(criteria).toMatch(/coalesce\(bool_or\(l\.user_id = auth\.uid\(\)\), false\) as liked_by_me/i);
+    expect(criteria).not.toMatch(/voter_token = _voter/i);
+  });
+
+  it("is mirrored in schema.sql and migrate-to-main-project.sql (section 6 verbatim)", () => {
+    const stripComments = (text: string): string =>
+      text
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .trim();
+    const sectionOf = (text: string): string => {
+      const start = text.indexOf("-- 6a. Fan profiles");
+      const endMarker = "grant execute on function public.get_past_winners() to anon, authenticated;";
+      const end = text.indexOf(endMarker);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      return stripComments(text.slice(start, end + endMarker.length));
+    };
+    const schemaSql = readFileSync(new URL("../../supabase/schema.sql", import.meta.url), "utf8");
+    const migrate = readFileSync(
+      new URL("../../supabase/migrate-to-main-project.sql", import.meta.url),
+      "utf8",
+    );
+    expect(sectionOf(schemaSql)).toBe(sectionOf(criteria));
+    expect(sectionOf(migrate)).toBe(sectionOf(criteria));
   });
 });

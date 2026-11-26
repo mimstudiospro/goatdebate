@@ -118,7 +118,8 @@ describe("supabase/fix-voter-token-exposure.sql", () => {
       /grant select \(id, debate_id, author_name, body, created_at\)\s*on public\.comments to anon, authenticated/i,
       /create or replace function public\.get_vote_counts\(\)/i,
       /create or replace function public\.get_my_votes\(_voter text\)/i,
-      /create or replace function public\.get_comments\(_debate uuid, _voter text\)/i,
+      /create or replace function public\.get_comments\(_debate uuid\)/i,
+      /create or replace function public\.cast_vote\(_debate uuid, _contender uuid, _voter text, _user uuid default null\)/i,
     ]) {
       expect(schemaSql).toMatch(fragment);
     }

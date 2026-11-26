@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { castVote, fetchAllDebates } from "../lib/api";
 import type { DebateWithTally } from "../lib/api";
+import { useSession } from "../lib/auth";
 import { computePercentages, formatVotes, getVoterToken } from "../lib/votes";
 import { initials } from "../lib/debates";
 import DebateComments from "./DebateComments";
@@ -18,6 +19,10 @@ export default function DebatePage({
   const [voting, setVoting] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // A signed-in fan's vote also counts toward their GOAT of Criteria
+  // points (1 point per debate per month). Anonymous votes count for
+  // the tally only — the user id is what links a vote to a fan.
+  const { user } = useSession();
 
   const load = useCallback(async () => {
     try {
@@ -48,7 +53,7 @@ export default function DebatePage({
     setVoting(true);
     setVoteError(null);
     try {
-      await castVote(item.debate.id, contenderId, getVoterToken());
+      await castVote(item.debate.id, contenderId, getVoterToken(), user?.id ?? null);
       await load();
     } catch (e) {
       setVoteError(e instanceof Error ? e.message : "Your vote did not go through — try again.");

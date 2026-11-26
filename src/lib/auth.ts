@@ -25,8 +25,13 @@ export function useSession(): { user: User | null; loading: boolean } {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (!cancelled) setUser(session?.user ?? null);
+      // A fresh sign-in (email, or Google) records the fan's public
+      // display name for the leaderboard. Best-effort — see ensureGoatProfile.
+      if (event === "SIGNED_IN" && session?.user) {
+        void ensureGoatProfile(session.user);
+      }
     });
     return () => {
       cancelled = true;
@@ -44,6 +49,71 @@ export async function signInWithPassword(email: string, password: string): Promi
   }
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Create a free fan account (email + password + display name). Anyone
+ * can sign up — this is what lets fans comment and enter the GOAT of
+ * Criteria contest. Owner gating is untouched: writing articles still
+ * needs the admin role (has_role), checked separately.
+ * Returns whether the account still needs email confirmation: when the
+ * project requires it, signUp returns no session and the user must
+ * click the confirmation link first. Throws with the Supabase message.
+ */
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  displayName: string,
+): Promise<{ needsConfirmation: boolean }> {
+  if (!supabaseConfigured || !supabase) {
+    throw new Error("Sign-up is not connected yet");
+  }
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { data: { display_name: displayName } },
+  });
+  if (error) throw new Error(error.message);
+  return { needsConfirmation: !data.session };
+}
+
+/**
+ * The name the app shows for a user: the display name they chose at
+ * sign-up (or from Google), else the part of their email before the @,
+ * else "Fan". Emails are never shown in the UI — the board and the
+ * comments show display names only.
+ */
+export function getDisplayName(user: User | null): string {
+  if (!user) return "Fan";
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const fromMeta = (value: unknown): string =>
+    typeof value === "string" ? value.trim() : "";
+  const name = fromMeta(meta["display_name"]) || fromMeta(meta["full_name"]);
+  if (name) return name.slice(0, 40);
+  if (user.email) {
+    const local = user.email.split("@")[0] ?? "";
+    if (local) return local.slice(0, 40);
+  }
+  return "Fan";
+}
+
+/**
+ * Upsert the fan's public display name into goat_profiles, so the
+ * leaderboard and other fans can see it. Best-effort: until
+ * add-criteria.sql has run the table does not exist yet, and the call
+ * quietly does nothing. Runs on every fresh sign-in (see useSession).
+ */
+export async function ensureGoatProfile(user: User | null): Promise<void> {
+  if (!supabaseConfigured || !supabase || !user) return;
+  try {
+    await supabase.from("goat_profiles").upsert(
+      { user_id: user.id, display_name: getDisplayName(user) },
+      { onConflict: "user_id" },
+    );
+  } catch {
+    // Table not live yet, or the network dropped — the board falls back
+    // to "Fan" for a missing profile, so nothing breaks.
+  }
 }
 
 /** sessionStorage key holding the hash route to return to after a Google OAuth callback. */

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchAllDebates } from "./lib/api";
 import type { DebateWithTally } from "./lib/api";
-import { consumeOAuthReturn, fetchIsAdmin, signOut, useSession } from "./lib/auth";
+import { consumeOAuthReturn, fetchIsAdmin, getDisplayName, signOut, useSession } from "./lib/auth";
 import { parseHash } from "./lib/routes";
 import type { Route } from "./lib/routes";
 import { supabaseConfigured } from "./lib/supabase";
@@ -12,6 +12,8 @@ import SignInPage from "./components/SignInPage";
 import ArticleList from "./components/ArticleList";
 import ArticlePage from "./components/ArticlePage";
 import ArticleEditor from "./components/ArticleEditor";
+import CriteriaPage from "./components/CriteriaPage";
+import { CriteriaHomeSection } from "./components/CriteriaBoard";
 
 function routeFromHash(): Route {
   return parseHash(window.location.hash);
@@ -92,6 +94,9 @@ export default function App() {
             </span>
           </a>
           <nav className="flex items-center gap-4 text-sm font-bold">
+            <a href="#/criteria" className="text-zinc-300 hover:text-gold">
+              Criteria
+            </a>
             <a href="#/articles" className="text-zinc-300 hover:text-gold">
               Articles
             </a>
@@ -103,7 +108,7 @@ export default function App() {
             {user ? (
               <>
                 <span className="hidden max-w-40 truncate text-xs text-zinc-500 sm:block" title={user.email}>
-                  {user.email}
+                  {getDisplayName(user)}
                 </span>
                 <button
                   type="button"
@@ -132,6 +137,8 @@ export default function App() {
           </div>
         ) : route.view === "signin" ? (
           <SignInPage />
+        ) : route.view === "criteria" ? (
+          <CriteriaPage />
         ) : route.view === "articles" ? (
           <ArticleList />
         ) : route.view === "article" ? (
@@ -170,11 +177,14 @@ export default function App() {
                 {loadError}
               </p>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2">
-                {items.map((item) => (
-                  <DebateCard key={item.debate.id} item={item} />
-                ))}
-              </div>
+              <>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {items.map((item) => (
+                    <DebateCard key={item.debate.id} item={item} />
+                  ))}
+                </div>
+                <CriteriaHomeSection />
+              </>
             )}
           </>
         )}
@@ -188,6 +198,9 @@ export default function App() {
             <span className="text-zinc-400"> No refunds on bad takes.</span>
           </span>
           <span className="flex items-center gap-4">
+            <a href="#/criteria" className="font-bold text-zinc-400 hover:text-gold">
+              GOAT of Criteria
+            </a>
             <a href="#/articles" className="font-bold text-zinc-400 hover:text-gold">
               Articles
             </a>

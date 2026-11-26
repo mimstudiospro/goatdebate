@@ -8,7 +8,8 @@ export type Route =
   | { view: "articles" }
   | { view: "article"; slug: string }
   | { view: "write" }
-  | { view: "write-edit"; id: string };
+  | { view: "write-edit"; id: string }
+  | { view: "criteria" };
 
 const SLUG = "[a-z0-9-]+";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -18,6 +19,7 @@ export function parseHash(hash: string): Route {
   let match = path.match(new RegExp(`^debate/(${SLUG})$`));
   if (match) return { view: "debate", slug: match[1] };
   if (path === "signin") return { view: "signin" };
+  if (path === "criteria") return { view: "criteria" };
   if (path === "articles") return { view: "articles" };
   match = path.match(new RegExp(`^articles/(${SLUG})$`));
   if (match) return { view: "article", slug: match[1] };

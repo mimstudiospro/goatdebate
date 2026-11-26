@@ -1,13 +1,19 @@
 export interface Comment {
   id: string;
   debate_id: string;
-  /** True when this comment was posted by this browser. Computed
+  /** The author's user id (null for the old anonymous comments — there
+   * are none live, but the column allows it). Never an email. */
+  user_id: string | null;
+  /** True when this comment was posted by the signed-in user. Computed
    * server-side by the get_comments RPC — the token itself never
    * leaves the database, so no visitor can see another browser's. */
   is_mine: boolean;
   author_name: string;
   body: string;
   created_at: string;
+  /** Likes on this comment, and whether the signed-in user liked it. */
+  like_count: number;
+  liked_by_me: boolean;
 }
 
 export const MAX_COMMENT_LENGTH = 500;
@@ -23,9 +29,9 @@ export const DEFAULT_AUTHOR_NAME = "Anonymous";
  * positives: "dick" (Dickens, the name Dick) and "cock" ("cocky")
  * are left out, and "spic" takes no -y suffix ("spicy" stays allowed).
  * This is a first line of defence only — it catches the common stuff;
- * a determined person can bypass any client-side filter. Real
- * enforcement (reporting, hiding, signed-in users) comes later,
- * after the Lovable sync.
+ * a determined person can bypass any client-side filter. Comments now
+ * need a sign-in, so abuse is tied to an account; reporting and hiding
+ * are still to come.
  */
 const FULL_SUFFIX_STEMS = [
   // Strong profanity

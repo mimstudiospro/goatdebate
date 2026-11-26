@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { signInWithGoogle, signInWithPassword } from "../lib/auth";
+import {
+  consumeOAuthReturn,
+  signInWithGoogle,
+  signInWithPassword,
+  signUpWithPassword,
+} from "../lib/auth";
 import { supabaseConfigured } from "../lib/supabase";
+import { MAX_AUTHOR_NAME_LENGTH, normalizeAuthorName } from "../lib/comments";
 
 /** Google "G" mark for the Continue with Google button. */
 function GoogleMark() {
@@ -26,33 +32,74 @@ function GoogleMark() {
   );
 }
 
-/** Email + password sign-in, plus Continue with Google. The owner
- * account is created in the Supabase dashboard; there is no public
- * sign-up here. */
+/**
+ * Sign in or create a free fan account. A free account lets fans
+ * comment and enter the GOAT of Criteria contest — voting stays open
+ * to everyone, signed in or not. Writing articles stays owner-only:
+ * the Write link only appears for the admin, and the server enforces
+ * it regardless of what the UI shows.
+ */
 export default function SignInPage() {
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [signingIn, setSigningIn] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  function goHome() {
+    window.location.hash = consumeOAuthReturn() ?? "#/";
+  }
 
   async function submit() {
-    if (signingIn) return;
+    if (busy) return;
     if (!email.trim() || !password) {
       setError("Enter your email and password.");
       return;
     }
-    setSigningIn(true);
+    if (mode === "signup") {
+      const name = normalizeAuthorName(displayName);
+      if (name === "Anonymous") {
+        setError("Pick a display name — that's how the leaderboard knows you.");
+        return;
+      }
+      if (password.length < 6) {
+        setError("Your password needs at least 6 characters.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("The two passwords don't match.");
+        return;
+      }
+    }
+    setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await signInWithPassword(email.trim(), password);
-      setDone(true);
-      window.location.hash = "#/write";
+      if (mode === "signup") {
+        const { needsConfirmation } = await signUpWithPassword(
+          email.trim(),
+          password,
+          normalizeAuthorName(displayName),
+        );
+        if (needsConfirmation) {
+          setNotice(
+            "You're in — check your email and click the confirmation link to finish creating your account.",
+          );
+        } else {
+          goHome();
+        }
+      } else {
+        await signInWithPassword(email.trim(), password);
+        goHome();
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign-in failed — try again.");
+      setError(e instanceof Error ? e.message : "That didn't go through — try again.");
     } finally {
-      setSigningIn(false);
+      setBusy(false);
     }
   }
 
@@ -70,19 +117,31 @@ export default function SignInPage() {
     }
   }
 
+  const isSignup = mode === "signup";
+
   return (
     <section className="mx-auto max-w-md pt-10 sm:pt-14">
       <h1 className="text-center text-4xl font-black tracking-tight">
-        Sign <span className="text-gold">in</span>
+        {isSignup ? (
+          <>
+            Join the <span className="text-gold">argument</span>
+          </>
+        ) : (
+          <>
+            Sign <span className="text-gold">in</span>
+          </>
+        )}
       </h1>
       <p className="mt-3 text-center text-sm text-zinc-400">
-        Sign in to write articles and posts. Everyone else just votes.
+        {isSignup
+          ? "A free account lets you comment and enter the GOAT of Criteria contest. Voting stays open to everyone."
+          : "Sign in to comment and join the GOAT of Criteria contest. Everyone else just votes."}
       </p>
 
       <button
         type="button"
         onClick={() => void google()}
-        disabled={googleBusy || signingIn || !supabaseConfigured}
+        disabled={googleBusy || busy || !supabaseConfigured}
         className="mt-8 flex w-full items-center justify-center gap-3 rounded-full border border-line bg-panel-2 py-3 text-sm font-bold text-zinc-100 transition-colors hover:border-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <GoogleMark />
@@ -91,7 +150,7 @@ export default function SignInPage() {
 
       <div className="mt-5 flex items-center gap-3 text-xs text-zinc-500" aria-hidden="true">
         <span className="h-px flex-1 bg-line" />
-        <span>or sign in with email</span>
+        <span>or {isSignup ? "create an account with email" : "sign in with email"}</span>
         <span className="h-px flex-1 bg-line" />
       </div>
 
@@ -102,8 +161,30 @@ export default function SignInPage() {
           void submit();
         }}
       >
+        {isSignup && (
+          <>
+            <label
+              className="block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400"
+              htmlFor="signup-name"
+            >
+              Display name
+            </label>
+            <input
+              id="signup-name"
+              type="text"
+              autoComplete="nickname"
+              value={displayName}
+              maxLength={MAX_AUTHOR_NAME_LENGTH}
+              disabled={busy || !supabaseConfigured}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="How the leaderboard knows you"
+              className="mt-2 w-full rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
+            />
+          </>
+        )}
+
         <label
-          className="block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400"
+          className={`block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400 ${isSignup ? "mt-4" : ""}`}
           htmlFor="signin-email"
         >
           Email
@@ -113,7 +194,7 @@ export default function SignInPage() {
           type="email"
           autoComplete="email"
           value={email}
-          disabled={signingIn || !supabaseConfigured}
+          disabled={busy || !supabaseConfigured}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
           className="mt-2 w-full rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
@@ -128,13 +209,34 @@ export default function SignInPage() {
         <input
           id="signin-password"
           type="password"
-          autoComplete="current-password"
+          autoComplete={isSignup ? "new-password" : "current-password"}
           value={password}
-          disabled={signingIn || !supabaseConfigured}
+          disabled={busy || !supabaseConfigured}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="Your password"
+          placeholder={isSignup ? "At least 6 characters" : "Your password"}
           className="mt-2 w-full rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
         />
+
+        {isSignup && (
+          <>
+            <label
+              className="mt-4 block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400"
+              htmlFor="signup-password-confirm"
+            >
+              Confirm password
+            </label>
+            <input
+              id="signup-password-confirm"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              disabled={busy || !supabaseConfigured}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Repeat your password"
+              className="mt-2 w-full rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
+            />
+          </>
+        )}
 
         {error && (
           <p
@@ -144,14 +246,18 @@ export default function SignInPage() {
             {error}
           </p>
         )}
-        {done && !error && <p className="mt-3 text-sm text-gold">Signed in — taking you to the editor.</p>}
+        {notice && !error && (
+          <p className="mt-3 rounded-xl border border-gold/50 bg-panel-2 px-3 py-2 text-sm text-gold">
+            {notice}
+          </p>
+        )}
 
         <button
           type="submit"
-          disabled={signingIn || !supabaseConfigured}
+          disabled={busy || !supabaseConfigured}
           className="mt-5 w-full rounded-full bg-gold py-3 text-sm font-black uppercase tracking-wide text-black transition-colors hover:bg-gold-deep disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {signingIn ? "Signing in…" : "Sign in"}
+          {busy ? "Hold on…" : isSignup ? "Create account" : "Sign in"}
         </button>
         {!supabaseConfigured && (
           <p className="mt-3 text-center text-xs text-zinc-500">
@@ -159,6 +265,40 @@ export default function SignInPage() {
           </p>
         )}
       </form>
+
+      <p className="mt-5 text-center text-sm text-zinc-400">
+        {isSignup ? (
+          <>
+            Already have an account?{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setMode("signin");
+                setError(null);
+                setNotice(null);
+              }}
+              className="font-bold text-gold hover:underline"
+            >
+              Sign in
+            </button>
+          </>
+        ) : (
+          <>
+            New here?{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setMode("signup");
+                setError(null);
+                setNotice(null);
+              }}
+              className="font-bold text-gold hover:underline"
+            >
+              Create a free account
+            </button>
+          </>
+        )}
+      </p>
     </section>
   );
 }

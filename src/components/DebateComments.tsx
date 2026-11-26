@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchComments, postComment } from "../lib/api";
+import { fetchComments, likeComment, postComment, unlikeComment } from "../lib/api";
+import { getDisplayName, useSession } from "../lib/auth";
 import {
   MAX_AUTHOR_NAME_LENGTH,
   MAX_COMMENT_LENGTH,
@@ -9,6 +10,13 @@ import {
 import type { Comment } from "../lib/comments";
 import { formatVotes, getVoterToken } from "../lib/votes";
 
+/**
+ * The thread under a debate. Anyone can read it — but posting takes a
+ * sign-in, and so does liking. Voting stays open to everyone, signed
+ * in or not. A signed-in fan's comments carry their display name and
+ * feed their GOAT of Criteria points (2 per comment, plus 1 per like
+ * the comment gets).
+ */
 export default function DebateComments({
   debateId,
   commentsEnabled,
@@ -24,19 +32,21 @@ export default function DebateComments({
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
   const [posted, setPosted] = useState(false);
+  const [likingId, setLikingId] = useState<string | null>(null);
 
+  const { user } = useSession();
   const myToken = getVoterToken();
 
   const load = useCallback(async () => {
     try {
-      setComments(await fetchComments(debateId, myToken));
+      setComments(await fetchComments(debateId));
       setLoadError(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load comments");
     } finally {
       setLoading(false);
     }
-  }, [debateId, myToken]);
+  }, [debateId]);
 
   useEffect(() => {
     void load();
@@ -48,8 +58,13 @@ export default function DebateComments({
     return () => window.clearInterval(id);
   }, [load]);
 
+  // Prefill the name with the fan's display name — still editable.
+  useEffect(() => {
+    if (user && !name) setName(getDisplayName(user));
+  }, [user, name]);
+
   async function submit() {
-    if (!commentsEnabled || posting) return;
+    if (!commentsEnabled || posting || !user) return;
     const validation = validateComment(body, name);
     if (!validation.ok) {
       setPostError(validation.error);
@@ -59,7 +74,7 @@ export default function DebateComments({
     setPostError(null);
     setPosted(false);
     try {
-      await postComment(debateId, validation.authorName, validation.body, myToken);
+      await postComment(debateId, validation.authorName, validation.body, myToken, user.id);
       setBody("");
       setPosted(true);
       await load();
@@ -67,6 +82,23 @@ export default function DebateComments({
       setPostError(e instanceof Error ? e.message : "Your comment did not go through — try again.");
     } finally {
       setPosting(false);
+    }
+  }
+
+  async function toggleLike(comment: Comment) {
+    if (!user || likingId) return;
+    setLikingId(comment.id);
+    try {
+      if (comment.liked_by_me) {
+        await unlikeComment(comment.id);
+      } else {
+        await likeComment(comment.id);
+      }
+      await load();
+    } catch {
+      // A failed like leaves the old state; the next refresh shows the truth.
+    } finally {
+      setLikingId(null);
     }
   }
 
@@ -80,7 +112,7 @@ export default function DebateComments({
           </span>
         </h2>
         <span className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-          No sign-in · Be decent
+          Sign in to comment · Be decent
         </span>
       </div>
 
@@ -112,71 +144,104 @@ export default function DebateComments({
               <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
                 {c.body}
               </p>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  disabled={!user || likingId === c.id}
+                  onClick={() => void toggleLike(c)}
+                  title={user ? (c.liked_by_me ? "Take your like back" : "Like this take") : "Sign in to like"}
+                  aria-pressed={c.liked_by_me}
+                  className={`rounded-full border px-3 py-1 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    c.liked_by_me
+                      ? "border-gold bg-gold/10 text-gold"
+                      : "border-line bg-panel-2 text-zinc-300 hover:border-gold/60"
+                  }`}
+                >
+                  ♥ {formatVotes(c.like_count)}
+                  {c.liked_by_me ? " · Liked" : ""}
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       )}
 
-      <form
-        className="mt-8 rounded-2xl border border-line bg-panel p-4 sm:p-5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <label className="block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400" htmlFor="comment-name">
-          Name (optional)
-        </label>
-        <input
-          id="comment-name"
-          type="text"
-          value={name}
-          maxLength={MAX_AUTHOR_NAME_LENGTH}
-          disabled={!commentsEnabled || posting}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Anonymous"
-          className="mt-2 w-full rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
-        />
-
-        <label className="mt-4 block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400" htmlFor="comment-body">
-          Your take
-        </label>
-        <textarea
-          id="comment-body"
-          value={body}
-          maxLength={MAX_COMMENT_LENGTH}
-          rows={3}
-          disabled={!commentsEnabled || posting}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Settle it in the comments…"
-          className="mt-2 w-full resize-y rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
-        />
-        <div className="mt-1 text-right text-xs text-zinc-500">
-          {body.length}/{MAX_COMMENT_LENGTH}
-        </div>
-
-        {postError && (
-          <p role="alert" className="mt-3 rounded-xl border border-red-500/50 bg-red-950 px-3 py-2 text-sm text-red-200">
-            {postError}
-          </p>
-        )}
-        {posted && !postError && (
-          <p className="mt-3 text-sm text-gold">Posted — your take is on the board.</p>
-        )}
-
-        <button
-          type="submit"
-          disabled={!commentsEnabled || posting}
-          className="mt-4 w-full rounded-full bg-gold py-3 text-sm font-black uppercase tracking-wide text-black transition-colors hover:bg-gold-deep disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-8"
+      {user ? (
+        <form
+          className="mt-8 rounded-2xl border border-line bg-panel p-4 sm:p-5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
         >
-          {posting ? "Posting…" : "Post comment"}
-        </button>
-        {!commentsEnabled && (
-          <p className="mt-3 text-center text-xs text-zinc-500 sm:text-left">
-            Comments open once the database is connected.
+          <label className="block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400" htmlFor="comment-name">
+            Name
+          </label>
+          <input
+            id="comment-name"
+            type="text"
+            value={name}
+            maxLength={MAX_AUTHOR_NAME_LENGTH}
+            disabled={!commentsEnabled || posting}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Your display name"
+            className="mt-2 w-full rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
+          />
+
+          <label className="mt-4 block text-xs font-bold uppercase tracking-[0.18em] text-zinc-400" htmlFor="comment-body">
+            Your take
+          </label>
+          <textarea
+            id="comment-body"
+            value={body}
+            maxLength={MAX_COMMENT_LENGTH}
+            rows={3}
+            disabled={!commentsEnabled || posting}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Settle it in the comments…"
+            className="mt-2 w-full resize-y rounded-xl border border-line bg-panel-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-gold focus:outline-none disabled:opacity-50"
+          />
+          <div className="mt-1 text-right text-xs text-zinc-500">
+            {body.length}/{MAX_COMMENT_LENGTH}
+          </div>
+
+          {postError && (
+            <p role="alert" className="mt-3 rounded-xl border border-red-500/50 bg-red-950 px-3 py-2 text-sm text-red-200">
+              {postError}
+            </p>
+          )}
+          {posted && !postError && (
+            <p className="mt-3 text-sm text-gold">Posted — your take is on the board.</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={!commentsEnabled || posting}
+            className="mt-4 w-full rounded-full bg-gold py-3 text-sm font-black uppercase tracking-wide text-black transition-colors hover:bg-gold-deep disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-8"
+          >
+            {posting ? "Posting…" : "Post comment"}
+          </button>
+          {!commentsEnabled && (
+            <p className="mt-3 text-center text-xs text-zinc-500 sm:text-left">
+              Comments open once the database is connected.
+            </p>
+          )}
+        </form>
+      ) : (
+        <div className="mt-8 rounded-2xl border border-line bg-panel p-4 text-center sm:p-5">
+          <p className="text-sm font-bold text-zinc-100">Sign in to join the argument</p>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-400">
+            Comments take a free account — it also puts you in the running for the
+            GOAT of Criteria. Voting stays open to everyone.
           </p>
-        )}
-      </form>
+          <a
+            href="#/signin"
+            className="mt-4 inline-block rounded-full bg-gold px-6 py-2.5 text-sm font-black uppercase tracking-wide text-black transition-colors hover:bg-gold-deep"
+          >
+            Sign in — it&apos;s free
+          </a>
+        </div>
+      )}
     </section>
   );
 }
