@@ -4,13 +4,22 @@ import { describe, expect, it } from "vitest";
 const sql = readFileSync(new URL("../../supabase/schema.sql", import.meta.url), "utf8");
 
 describe("supabase/schema.sql", () => {
-  it("creates the six tables", () => {
+  it("creates the four GOAT tables — and no admins or articles table", () => {
     expect(sql).toMatch(/create table if not exists public\.debates/i);
     expect(sql).toMatch(/create table if not exists public\.contenders/i);
     expect(sql).toMatch(/create table if not exists public\.votes/i);
     expect(sql).toMatch(/create table if not exists public\.comments/i);
-    expect(sql).toMatch(/create table if not exists public\.admins/i);
-    expect(sql).toMatch(/create table if not exists public\.articles/i);
+    // Articles live in the SHARED main-project table (migration 0021),
+    // not in a GOAT table: this file widens its site check to 'goat'
+    // and re-asserts its policies instead of creating it. The phase-3
+    // admins table / is_admin() are retired with the GOAT project.
+    expect(sql).not.toMatch(/create table if not exists public\.admins/i);
+    expect(sql).not.toMatch(/create table if not exists public\.articles/i);
+    expect(sql).not.toMatch(/public\.is_admin\(\)/i);
+    expect(sql).toMatch(/articles_site_check check \(site in \('main', 'lang', 'goat'\)\)/i);
+    expect(sql).toMatch(/create policy "Admins write articles" on public\.articles/i);
+    expect(sql).toMatch(/for insert to authenticated with check \(public\.has_role\(auth\.uid\(\), 'admin'\)\)/i);
+    expect(sql).toMatch(/create policy "Anyone can read published articles" on public\.articles/i);
   });
 
   it("enforces one vote per browser per debate", () => {
@@ -69,7 +78,8 @@ describe("supabase/schema.sql", () => {
     ]) {
       expect(sql).toContain(slug);
     }
-    expect(sql).toMatch(/on conflict do nothing/i);
+    expect(sql).toMatch(/on conflict \(slug\) do nothing/i);
+    expect(sql).toMatch(/on conflict \(id\) do nothing/i);
   });
 
   it("add-debate-10.sql seeds only the 10th debate idempotently", () => {
@@ -97,7 +107,42 @@ describe("supabase/schema.sql", () => {
     }
   });
 
-  it("add-articles.sql creates only the admins + articles tables, idempotently", () => {
+  it("migrate-to-main-project.sql is the same SQL as schema.sql (bodies identical, headers differ)", () => {
+    const migrate = readFileSync(
+      new URL("../../supabase/migrate-to-main-project.sql", import.meta.url),
+      "utf8",
+    );
+    // Strip comment lines: the two files differ only in their headers.
+    const stripComments = (text: string): string =>
+      text
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .trim();
+    expect(stripComments(migrate)).toBe(stripComments(sql));
+    // And the migration file carries the same key guarantees on its own.
+    expect(migrate).toMatch(/create table if not exists public\.debates/i);
+    expect(migrate).toMatch(/create table if not exists public\.votes/i);
+    expect(migrate).toMatch(/create table if not exists public\.comments/i);
+    expect(migrate).not.toMatch(/create table if not exists public\.admins/i);
+    expect(migrate).not.toMatch(/create table if not exists public\.articles/i);
+    expect(migrate).not.toMatch(/public\.is_admin\(\)/i);
+    expect(migrate).toMatch(/articles_site_check check \(site in \('main', 'lang', 'goat'\)\)/i);
+    expect(migrate).toMatch(/public\.has_role\(auth\.uid\(\), 'admin'\)/i);
+    expect(migrate).toMatch(/create or replace function public\.cast_vote/i);
+    for (const fn of ["get_vote_counts", "get_my_votes", "get_comments"]) {
+      expect(migrate).toMatch(new RegExp(`create or replace function public\\.${fn}`, "i"));
+    }
+    expect(migrate).toMatch(/revoke select, insert on public\.votes from anon, authenticated/i);
+    expect(migrate).toMatch(
+      /grant select \(id, debate_id, author_name, body, created_at\)\s*on public\.comments to anon, authenticated/i,
+    );
+    expect(migrate).toMatch(/on conflict \(slug\) do nothing/i);
+    // No live voter_token and no email address may ever appear in it.
+    expect(migrate).not.toMatch(/@/);
+  });
+
+  it("add-articles.sql is the retired GOAT-project file (unchanged, phase-3 gating)", () => {
     const addArticles = readFileSync(new URL("../../supabase/add-articles.sql", import.meta.url), "utf8");
     expect(addArticles).toMatch(/create table if not exists public\.admins/i);
     expect(addArticles).toMatch(/user_id uuid primary key references auth\.users \(id\)/i);

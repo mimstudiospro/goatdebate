@@ -59,7 +59,7 @@ export default function App() {
       setIsAdmin(false);
       return;
     }
-    void fetchIsAdmin().then((admin) => {
+    void fetchIsAdmin(user?.id ?? null).then((admin) => {
       if (!cancelled) setIsAdmin(admin);
     });
     return () => {

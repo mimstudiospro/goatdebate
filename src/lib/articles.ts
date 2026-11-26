@@ -5,10 +5,20 @@ import { supabase, supabaseConfigured } from "./supabase";
 /** Long articles and short posts are one system, one editor. */
 export type ArticleKind = "article" | "post";
 
+/**
+ * GOAT articles live in the SHARED main-project articles table
+ * (mimstudiospro.com, migration 0021) — one table serves the main
+ * site, lang and GOAT, picked by the `site` column. Every GOAT
+ * articles query filters on this value and every GOAT write sets it,
+ * so the three sites never see each other's articles.
+ */
+export const GOAT_SITE = "goat";
+
 export const ARTICLE_KINDS: ArticleKind[] = ["article", "post"];
 
 export type ArticleRow = {
   id: string;
+  site: string;
   kind: string;
   slug: string;
   title: string;
@@ -114,12 +124,13 @@ function requireClient() {
   return supabase;
 }
 
-/** Published articles, newest first. Public read. */
+/** Published GOAT articles, newest first. Public read. */
 export async function fetchPublishedArticles(): Promise<ArticleRow[]> {
   const client = requireClient();
   const { data, error } = await client
     .from("articles")
     .select("*")
+    .eq("site", GOAT_SITE)
     .eq("status", "published")
     .order("published_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
@@ -127,12 +138,13 @@ export async function fetchPublishedArticles(): Promise<ArticleRow[]> {
   return (data ?? []) as ArticleRow[];
 }
 
-/** One published article by slug, or null. Public read. */
+/** One published GOAT article by slug, or null. Public read. */
 export async function fetchPublishedArticle(slug: string): Promise<ArticleRow | null> {
   const client = requireClient();
   const { data, error } = await client
     .from("articles")
     .select("*")
+    .eq("site", GOAT_SITE)
     .eq("slug", slug)
     .eq("status", "published")
     .maybeSingle();
@@ -140,22 +152,28 @@ export async function fetchPublishedArticle(slug: string): Promise<ArticleRow | 
   return (data ?? null) as ArticleRow | null;
 }
 
-/** Every article, drafts included, newest-edited first. Admin only —
+/** Every GOAT article, drafts included, newest-edited first. Admin only —
  * the RLS policy rejects anyone else. */
 export async function fetchAdminArticles(): Promise<ArticleRow[]> {
   const client = requireClient();
   const { data, error } = await client
     .from("articles")
     .select("*")
+    .eq("site", GOAT_SITE)
     .order("updated_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as ArticleRow[];
 }
 
-/** One article by id, draft or published. Admin only. */
+/** One GOAT article by id, draft or published. Admin only. */
 export async function fetchAdminArticle(id: string): Promise<ArticleRow | null> {
   const client = requireClient();
-  const { data, error } = await client.from("articles").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await client
+    .from("articles")
+    .select("*")
+    .eq("site", GOAT_SITE)
+    .eq("id", id)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return (data ?? null) as ArticleRow | null;
 }
@@ -175,6 +193,7 @@ export interface SaveArticleInput extends ArticleFormValues {
 export async function saveArticle(input: SaveArticleInput, authorId: string): Promise<ArticleRow> {
   const client = requireClient();
   const values = {
+    site: GOAT_SITE,
     kind: input.kind,
     slug: input.slug.trim(),
     title: input.title.trim(),

@@ -1,11 +1,10 @@
 -- ================= GOAT Debate — fix voter_token exposure =================
 --
--- Run ONCE in the Supabase SQL editor on the project that hosts the GOAT
--- tables (after schema.sql v1 / add-comments.sql). As of this writing
--- that is the GOAT project (kawpqwfucxubjtpsgfcq), but the GOAT tables
--- are scheduled to migrate into the main mimstudiospro project
--- (freqksgnswajwhfbubec) — run this file THERE once the migration lands,
--- not on the retiring GOAT project. Idempotent: safe to run again
+-- HISTORICAL FILE — kept for the record. This fix ran on the retiring
+-- GOAT project (Nov 26, 2026 ~00:32 EST, verified live). It now also
+-- lives in supabase/migrate-to-main-project.sql and supabase/schema.sql,
+-- which are the files to run in the main mimstudiospro project — do NOT
+-- run this file there. Idempotent: safe to run again
 -- (CREATE OR REPLACE for functions, DROP POLICY IF EXISTS, REVOKE before GRANT).
 --
 -- The problem: anon had a table-level GRANT SELECT on votes and comments,

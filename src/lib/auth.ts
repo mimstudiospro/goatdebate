@@ -53,15 +53,27 @@ export async function signOut(): Promise<void> {
 }
 
 /**
- * Whether the signed-in user is an admin (has a row in public.admins).
- * Checked via the SECURITY DEFINER is_admin() RPC — the admins table
- * itself is never read directly. Returns false when signed out or
- * unconfigured. This is a UI convenience only: RLS enforces writes
- * server-side regardless of what the UI shows.
+ * Whether the signed-in user is an admin (has the 'admin' role on the
+ * shared main-site account system). Checked the way the main site does
+ * it — via the public has_role RPC against `user_roles`:
+ *   supabase.rpc("has_role", { _user_id: userId, _role: "admin" })
+ * During the cutover the app may still point at the retiring GOAT
+ * project, which has no has_role: if that call errors, fall back to
+ * the phase-3 is_admin() RPC, which only exists there. Returns false
+ * when signed out, unconfigured, or when neither call works. This is
+ * a UI convenience only: RLS enforces article writes server-side
+ * regardless of what the UI shows.
  */
-export async function fetchIsAdmin(): Promise<boolean> {
-  if (!supabaseConfigured || !supabase) return false;
-  const { data, error } = await supabase.rpc("is_admin");
-  if (error) return false;
-  return data === true;
+export async function fetchIsAdmin(userId: string | null): Promise<boolean> {
+  if (!supabaseConfigured || !supabase || !userId) return false;
+  const { data, error } = await supabase.rpc("has_role", {
+    _user_id: userId,
+    _role: "admin",
+  });
+  if (!error) return data === true;
+  // Pre-rotation fallback: still pointed at the GOAT project, where
+  // has_role does not exist. is_admin() only exists there.
+  const fallback = await supabase.rpc("is_admin");
+  if (fallback.error) return false;
+  return fallback.data === true;
 }
