@@ -1,23 +1,29 @@
 import { useEffect, useState } from "react";
 import { fetchAllDebates } from "./lib/api";
 import type { DebateWithTally } from "./lib/api";
+import { fetchIsAdmin, signOut, useSession } from "./lib/auth";
+import { parseHash } from "./lib/routes";
+import type { Route } from "./lib/routes";
 import { supabaseConfigured } from "./lib/supabase";
 import { getVoterToken } from "./lib/votes";
 import DebateCard from "./components/DebateCard";
 import DebatePage from "./components/DebatePage";
+import SignInPage from "./components/SignInPage";
+import ArticleList from "./components/ArticleList";
+import ArticlePage from "./components/ArticlePage";
+import ArticleEditor from "./components/ArticleEditor";
 
-function routeFromHash(): { view: "home" } | { view: "debate"; slug: string } {
-  const hash = window.location.hash.replace(/^#\/?/, "");
-  const match = hash.match(/^debate\/([a-z0-9-]+)$/);
-  if (match) return { view: "debate", slug: match[1] };
-  return { view: "home" };
+function routeFromHash(): Route {
+  return parseHash(window.location.hash);
 }
 
 export default function App() {
-  const [route, setRoute] = useState(routeFromHash);
+  const [route, setRoute] = useState<Route>(routeFromHash);
   const [items, setItems] = useState<DebateWithTally[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const { user } = useSession();
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     const onHash = () => {
@@ -45,16 +51,60 @@ export default function App() {
     };
   }, []);
 
+  // Admin status is a UI convenience only — RLS enforces article
+  // writes server-side regardless of what the header shows.
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) {
+      setIsAdmin(false);
+      return;
+    }
+    void fetchIsAdmin().then((admin) => {
+      if (!cancelled) setIsAdmin(admin);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
   return (
     <div className="min-h-screen bg-canvas text-zinc-100">
       <header className="border-b border-line">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4">
           <a href="#/" className="flex items-baseline gap-2">
             <span className="text-2xl font-black tracking-tight">
               <span className="text-gold">GOAT</span> DEBATE
             </span>
           </a>
-          <span className="hidden text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 sm:block">
+          <nav className="flex items-center gap-4 text-sm font-bold">
+            <a href="#/articles" className="text-zinc-300 hover:text-gold">
+              Articles
+            </a>
+            {isAdmin && (
+              <a href="#/write" className="text-zinc-300 hover:text-gold">
+                Write
+              </a>
+            )}
+            {user ? (
+              <>
+                <span className="hidden max-w-40 truncate text-xs text-zinc-500 sm:block" title={user.email}>
+                  {user.email}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void signOut()}
+                  className="text-zinc-300 hover:text-gold"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <a href="#/signin" className="text-zinc-300 hover:text-gold">
+                Sign in
+              </a>
+            )}
+          </nav>
+          <span className="hidden w-full text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 lg:block">
             Settle it. Vote for your GOAT.
           </span>
         </div>
@@ -65,6 +115,20 @@ export default function App() {
           <div className="pt-6">
             <DebatePage slug={route.slug} votingEnabled={supabaseConfigured} />
           </div>
+        ) : route.view === "signin" ? (
+          <SignInPage />
+        ) : route.view === "articles" ? (
+          <ArticleList />
+        ) : route.view === "article" ? (
+          <div className="pt-6">
+            <ArticlePage slug={route.slug} />
+          </div>
+        ) : route.view === "write" || route.view === "write-edit" ? (
+          <ArticleEditor
+            articleId={route.view === "write-edit" ? route.id : null}
+            user={user}
+            isAdmin={isAdmin}
+          />
         ) : (
           <>
             <section className="pb-8 pt-10 text-center sm:pt-14">
@@ -108,7 +172,12 @@ export default function App() {
             browser, per debate. Change your mind anytime.
             <span className="text-zinc-400"> No refunds on bad takes.</span>
           </span>
-          <span>© {new Date().getFullYear()} GOAT Debate</span>
+          <span className="flex items-center gap-4">
+            <a href="#/articles" className="font-bold text-zinc-400 hover:text-gold">
+              Articles
+            </a>
+            <span>© {new Date().getFullYear()} GOAT Debate</span>
+          </span>
         </div>
       </footer>
     </div>

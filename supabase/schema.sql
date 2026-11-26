@@ -8,15 +8,19 @@
 --   contenders  — exactly two per debate (name, tagline, sort_order)
 --   votes       — one row per browser per debate; unique (debate_id, voter_token)
 --   comments    — one row per comment (no sign-in; voter_token identifies the browser)
+--   admins      — one row per owner account; gates article writes (no email in code/SQL)
+--   articles    — long articles and short posts (kind), draft or published
 --
 -- Voting goes through ONE SECURITY DEFINER RPC, cast_vote, which upserts
 -- by (debate_id, voter_token) so a browser can change its vote. The RPC
 -- pins SET search_path = '' and its body is fully schema-qualified
 -- (public.* tables, pg_catalog builtins only) — never relax this.
 --
--- RLS: public read on all three tables; anon may insert votes directly
--- (the app uses the RPC; the unique constraint still enforces one vote
--- per browser per debate either way).
+-- RLS: public read on debates, contenders, votes, comments and
+-- published articles; anon may insert votes directly (the app uses the
+-- RPC; the unique constraint still enforces one vote per browser per
+-- debate either way). Article writes require a row in public.admins —
+-- see section 5; no email address appears in code or SQL.
 
 -- 1. Tables ---------------------------------------------------------------
 create table if not exists public.debates (
@@ -186,5 +190,108 @@ on conflict (id) do nothing;
 -- select count(*) from public.debates;        -- expect 10
 -- select count(*) from public.contenders;     -- expect 20
 -- select count(*) from public.comments;       -- expect 0
+-- select count(*) from public.articles;       -- expect 0 (no seed articles)
+-- select count(*) from public.admins;         -- expect 0 until the owner's row is inserted
 -- select proname, prosecdef, proconfig from public.pg_proc where proname = 'cast_vote';
 --   -- expect prosecdef true, proconfig ["search_path=\"\""]
+-- select proname, prosecdef, proconfig from public.pg_proc where proname in ('is_admin', 'set_articles_updated_at');
+--   -- expect both prosecdef true, proconfig ["search_path=\"\""]
+
+-- 5. Admins + articles (phase 3: signed-in authoring) ----------------------
+-- Owner gating uses the admins table, NEVER an email address in code or
+-- SQL: this repo is public, and no personal email may appear in it.
+-- The owner's row is inserted later via the Supabase dashboard
+-- (Authentication -> user id -> insert into public.admins). Until a row
+-- exists, nobody can write articles — that is the safe default.
+-- The admins table has RLS enabled with NO policies: nobody can read it
+-- directly. The SECURITY DEFINER is_admin() function is the only read
+-- path. This is the same content as supabase/add-articles.sql, so a
+-- fresh setup gets it from this file alone.
+create table if not exists public.admins (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+alter table public.admins enable row level security;
+-- Deliberately no policies on public.admins: direct reads are denied
+-- for everyone; only public.is_admin() (security definer) reads it.
+
+create or replace function public.is_admin()
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return exists (
+    select 1 from public.admins
+    where public.admins.user_id = auth.uid()
+  );
+end;
+$$;
+
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+
+create table if not exists public.articles (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null default 'article' check (kind in ('article', 'post')),
+  slug text not null unique,
+  title text not null check (char_length(btrim(title)) between 1 and 160),
+  excerpt text not null default '' check (char_length(excerpt) <= 300),
+  body_markdown text not null default '',
+  cover_image_url text,
+  status text not null default 'draft' check (status in ('draft', 'published')),
+  author_id uuid references auth.users (id),
+  published_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists articles_status_published_at_idx
+  on public.articles (status, published_at desc);
+
+create or replace function public.set_articles_updated_at()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists articles_updated_at on public.articles;
+create trigger articles_updated_at before update on public.articles
+for each row execute function public.set_articles_updated_at();
+
+alter table public.articles enable row level security;
+
+drop policy if exists "articles_public_read" on public.articles;
+create policy "articles_public_read" on public.articles
+  for select to anon, authenticated using (status = 'published');
+
+drop policy if exists "articles_admin_read" on public.articles;
+create policy "articles_admin_read" on public.articles
+  for select to authenticated using (public.is_admin());
+
+drop policy if exists "articles_admin_insert" on public.articles;
+create policy "articles_admin_insert" on public.articles
+  for insert to authenticated with check (public.is_admin());
+
+drop policy if exists "articles_admin_update" on public.articles;
+create policy "articles_admin_update" on public.articles
+  for update to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+drop policy if exists "articles_admin_delete" on public.articles;
+create policy "articles_admin_delete" on public.articles
+  for delete to authenticated using (public.is_admin());
+
+grant select on public.articles to anon, authenticated;
+grant insert, update, delete on public.articles to authenticated;
+grant all on public.articles to service_role;
+
+-- No grants on public.admins: direct access stays denied for everyone.
