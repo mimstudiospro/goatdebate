@@ -161,6 +161,10 @@ create policy "comments_anon_insert" on public.comments
 -- token. The list is served by get_comments (section 3b), which returns
 -- an is_mine flag computed server-side. The direct INSERT path stays:
 -- a browser posts its OWN token, which is not a leak.
+-- Lovable Cloud grants SELECT to anon/authenticated on new tables by
+-- default, so revoke the table-level grant first (verified Nov 26:
+-- without this, voter_token stayed readable in the main project).
+revoke select on public.comments from anon, authenticated;
 grant select (id, debate_id, author_name, body, created_at)
   on public.comments to anon, authenticated;
 grant insert on public.comments to anon, authenticated;
